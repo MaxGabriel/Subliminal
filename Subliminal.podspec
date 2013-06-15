@@ -6,7 +6,7 @@
 #
 Pod::Spec.new do |s|
   s.name         = "Subliminal"
-  s.version      = "0.0.1"
+  s.version      = "1.1.0"
   s.summary      = "Objective-C Integration Testing framework built on UIAutomation"
   s.description  = <<-DESC
                      Subliminal is an open-source framework for writing iOS integration tests. 
@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
   # the email addresses of the authors by using the SCM log. E.g. $ git log
   #
   s.author       = { "Jeff Wear" => "feedback.tagher@gmail.com" }
-  s.source       = { :git => "https://github.com/inkling/Subliminal.git", :tag => "0.0.1" }
+  s.source       = { :git => "https://github.com/MaxGabriel/Subliminal.git", :tag => "1.1.0" }
   s.platform     = :ios, '5.0'
   s.source_files = 'Sources/**/*.{h,m}'
   s.resources = ['Rakefile','Supporting Files/**',]
