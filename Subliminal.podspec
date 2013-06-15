@@ -7,16 +7,13 @@
 Pod::Spec.new do |s|
   s.name         = "Subliminal"
   s.version      = "0.0.1"
-  s.summary      = "A short description of Subliminal."
-  # s.description  = <<-DESC
-  #                   An optional longer description of Subliminal
-  #
-  #                   * Markdown format.
-  #                   * Don't worry about the indent, we strip it!
-  #                  DESC
+  s.summary      = "Objective-C Integration Testing framework built on UIAutomation"
+  s.description  = <<-DESC
+                     Subliminal is an open-source framework for writing iOS integration tests. 
+                      It provides a familiar OCUnit/SenTest-like interface on top of Apple’s UIAutomation framework, with tests written entirely in Objective-C. 
+                      Subliminal also provides a powerful mechanism for your tests to manipulate your application directly.
+                    DESC
   s.homepage     = "http://inkling.github.io/Subliminal/"
-  # s.screenshots  = "www.example.com/screenshots_1", "www.example.com/screenshots_2"
-
   s.license      = 'Apache 2.0'
 
   # Specify the authors of the library, with email addresses. You can often find
