@@ -15,7 +15,7 @@ Pod::Spec.new do |s|
   s.platform     = :ios, '5.0'
   s.source_files = 'Sources/**/*.{h,m}'
   s.resources = ['Rakefile','Supporting Files/**',]
-  # s.exclude_files = 'Supporting Files/Xd'
+  s.exclude_files = ['Supporting Files/Xcode/Integration Tests.xcconfig','Supporting Files/Xcode/Schemes/*']
   s.framework  = 'SenTestingKit'
   s.requires_arc = true
   s.xcconfig = { 
