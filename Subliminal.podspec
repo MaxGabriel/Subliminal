@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
                     DESC
   s.homepage     = "http://inkling.github.io/Subliminal/"
   s.license      = 'Apache 2.0'
-  s.author       = { "Jeff Wear" => "feedback.tagher@gmail.com" } # Warning change to Jeff's email
+  s.author       = { "Jeff Wear" => "jeff@inkling.com" }
   s.source       = { :git => "https://github.com/MaxGabriel/Subliminal.git", :tag => "1.1.0" }
   s.platform     = :ios, '5.0'
   s.source_files = 'Sources/**/*.{h,m}'
