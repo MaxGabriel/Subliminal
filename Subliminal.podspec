@@ -14,14 +14,16 @@ Pod::Spec.new do |s|
   s.source       = { :git => "https://github.com/MaxGabriel/Subliminal.git", :tag => "1.1.0" }
   s.platform     = :ios, '5.0'
   s.source_files = 'Sources/**/*.{h,m}'
-  s.resources = ['Rakefile','Supporting Files/**',]
-  s.exclude_files = ['Supporting Files/Xcode/Integration Tests.xcconfig','Supporting Files/Xcode/Schemes/*']
-  s.framework  = 'SenTestingKit'
+  s.private_header_files = "Sources/Classes/Internal/SLMainThreadRef.h" #["*+Internal.h", "SLMainThreadRef.h", "SLAccessibilityPath.h"] # ['Sources/Classes/Internal/**'] #
+  # s.resources = ['Rakefile','Supporting Files/**',]
+  s.preserve_paths = ['Rakefile','Supporting Files/**',]
+  # s.exclude_files = ['Supporting Files/Xcode/Integration Tests.xcconfig','Supporting Files/Xcode/Schemes/*']
+  # s.framework  = 'SenTestingKit'
   s.requires_arc = true
   s.xcconfig = { 
     'GCC_PREPROCESSOR_DEFINITIONS' => '$(inherited) INTEGRATION_TESTING=1',
-    'OTHER_LDFLAGS' => '$(inherited) -ObjC',
-    'HEADER_SEARCH_PATHS' => '$(inherited) $(BUILT_PRODUCTS_DIR)/usr/local/include',
+    # 'OTHER_LDFLAGS' => '$(inherited) -ObjC',
+    # 'HEADER_SEARCH_PATHS' => '$(inherited) $(BUILT_PRODUCTS_DIR)/usr/local/include',
     'INFOPLIST_FILE' => '$(TARGET_NAME)/$(TARGET_NAME)-Info.plist',
     'PRODUCT_NAME' => '$(PROJECT_NAME) ($(TARGET_NAME))',
    }
