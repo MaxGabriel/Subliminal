@@ -17,7 +17,7 @@ Pod::Spec.new do |s|
   s.private_header_files = "Sources/Classes/Internal/SLMainThreadRef.h" #["*+Internal.h", "SLMainThreadRef.h", "SLAccessibilityPath.h"] # ['Sources/Classes/Internal/**'] #
   # s.resources = ['Rakefile','Supporting Files/**',]
   s.preserve_paths = ['Rakefile','Supporting Files/**',]
-  # s.exclude_files = ['Supporting Files/Xcode/Integration Tests.xcconfig','Supporting Files/Xcode/Schemes/*']
+  s.exclude_files = ['Supporting Files/Xcode/Integration Tests.xcconfig','Supporting Files/Xcode/Schemes/*']
   # s.framework  = 'SenTestingKit'
   s.requires_arc = true
   s.xcconfig = { 
