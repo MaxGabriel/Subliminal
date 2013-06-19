@@ -22,4 +22,12 @@ Pod::Spec.new do |s|
     'INFOPLIST_FILE' => '$(TARGET_NAME)/$(TARGET_NAME)-Info.plist',
     'PRODUCT_NAME' => '$(PROJECT_NAME) ($(TARGET_NAME))',
    }
+
+   # Installs Subliminal Instruments Template and file templates
+  s.post_install do |library_representation|
+    Dir.chdir(library_representation.sandbox_dir + 'Subliminal/') do
+      system('rake install DOCS=no') # Rake is a dependency of Cocoapods
+    end
+  end
+  
 end
