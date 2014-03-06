@@ -22,7 +22,6 @@
 
 #import "SLTextField.h"
 #import "SLUIAElement+Subclassing.h"
-#import "SLKeyboard.h"
 
 @implementation SLTextField
 
@@ -31,20 +30,24 @@
 }
 
 - (void)setText:(NSString *)text {
-    // Normally we want to tap on the view that backs this SLTextField before
-    // attempting to edit the field.  That way we can be confident that the
-    // view will be first responder.  The only exception is when the backing
-    // view is a UITextField and is *already* editing, because in that case
-    // the view is already first responder and a real user would probably not
-    // tap again before typing.
-    __block BOOL tapBeforeSettingText;
-    [self examineMatchingObject:^(NSObject *object) {
-        tapBeforeSettingText = !([object isKindOfClass:[UITextField class]] && [(UITextField *)object isEditing]);
-    }];
-    if (tapBeforeSettingText) {
+    [self setText:text withKeyboard: _defaultKeyboard ?: [SLKeyboard keyboard]];
+}
+
+- (void)setText:(NSString *)text withKeyboard:(id<SLKeyboard>)keyboard
+{
+    // Tap to show the keyboard (if the field doesn't already have keyboard focus,
+    // because in that case a real user would probably not tap again before typing)
+    if (![self hasKeyboardFocus]) {
         [self tap];
     }
-    [[SLKeyboard keyboard] typeString:text];
+
+    // Clear any current text before typing the new text.
+    [self waitUntilTappable:YES thenSendMessage:@"setValue('')"];
+    if ([keyboard respondsToSelector:@selector(typeString:withSetValueFallbackUsingElement:)]) {
+        [keyboard typeString:text withSetValueFallbackUsingElement:self];
+    } else {
+        [keyboard typeString:text];
+    }
 }
 
 - (BOOL)matchesObject:(NSObject *)object {
@@ -83,8 +86,6 @@
 @end
 
 
-static const NSTimeInterval kWebviewTextfieldDelay = 1;
-
 @implementation SLWebTextField
 // SLWebTextField does not inherit from SLTextField
 // because the elements it matches, web text fields, are not instances of UITextField
@@ -94,16 +95,28 @@ static const NSTimeInterval kWebviewTextfieldDelay = 1;
     return [self value];
 }
 
-// Experimentation has shown that SLTextFields within a webview must be tapped, and
-// a waiting period is necessary, before setValue() will have any effect. A wait period
-// after setting the value is also necessary, otherwise it seems as if regardless of
-// correct matching, the next actions sent to UIAutomation will be applied incorrectly
-// to this webview textfield.
 - (void)setText:(NSString *)text {
-    [self tap];
-    [NSThread sleepForTimeInterval:kWebviewTextfieldDelay];
-    [[SLKeyboard keyboard] typeString:text];
-    [NSThread sleepForTimeInterval:kWebviewTextfieldDelay];
+    // Tap to show the keyboard (if the field doesn't already have keyboard focus,
+    // because in that case a real user would probably not tap again before typing)
+    BOOL didNewlyBecomeFirstResponder = NO;
+    if (![self hasKeyboardFocus]) {
+        didNewlyBecomeFirstResponder = YES;
+        [self tap];
+    }
+
+    // Clear any current text before typing the new text.
+    // Unfortunately, you can't set the value (text) of a web text field to the empty string: `setValue('')` simply fails.
+    // So, if there's text to clear, we set the text to a single space and then delete that.
+    if ([[self text] length]) {
+        // If the field newly became first responder, we must delay for a second or `setValue('')` won't have an effect.
+        if (didNewlyBecomeFirstResponder) {
+            [NSThread sleepForTimeInterval:1.0];
+        }
+        [self waitUntilTappable:YES thenSendMessage:@"setValue(' ')"];
+        [[SLKeyboardKey elementWithAccessibilityLabel:@"Delete"] tap];
+    }
+
+    [[SLKeyboard keyboard] typeString:text withSetValueFallbackUsingElement:self];
 }
 
 @end

@@ -47,7 +47,7 @@ screencast [here](https://vimeo.com/67771344))
 Running the Example App
 -----------------------
 
-1. Clone the Subliminal repo: `git clone git@github.com:inkling/Subliminal.git`.
+1. Clone the Subliminal repo: `git clone https://github.com/inkling/Subliminal.git`.
 2. `cd` into the directory: `cd Subliminal`.
 3. If you haven't already, setup Subliminal: `rake install`.
 4. Open the Example project: `open Example/SubliminalTest.xcodeproj`.
@@ -66,7 +66,7 @@ you're using git for your project add Subliminal as a submodule:
 ```sh
 mkdir Integration\ Tests
 mkdir Integration\ Tests/Subliminal
-git submodule add git@github.com:inkling/Subliminal.git Integration\ Tests/Subliminal/
+git submodule add https://github.com/inkling/Subliminal.git Integration\ Tests/Subliminal/
 ```
 
 Otherwise manually download and add Subliminal to `Integration Tests/Subliminal`.
@@ -189,11 +189,8 @@ Integration Tests target.
 
 Also note that this code is conditionalized by the `INTEGRATION_TESTING` preprocessor 
 macro (set by `Integration Tests.xcconfig`), and so will not be built into your 
-main application target. Unlike many other integration testing frameworks, Subliminal 
-does not use private APIs, so it is safe to include calls to Subliminal APIs in 
-any target that links against Subliminal. However, conditionalizing calls to Subliminal 
-helps you keep straight exactly when you expect the tests to be run: when you 
-run the Integration Tests target, not every time you launch your application.
+main application target. This helps you keep straight exactly when you expect the tests 
+to be run: when you run the Integration Tests target, not every time you launch your application.
 
 Usage
 -----
@@ -219,7 +216,7 @@ Here's what a sample `SLTest` implementation looks like:
     [submitButton tap];
 
 	// wait for the login spinner to disappear
-    SLAssertTrueWithTimeout([_loginSpinner isInvalidOrInvisible], 
+    SLAssertTrueWithTimeout([loginSpinner isInvalidOrInvisible], 
     						3.0, @"Log-in was not successful.");
 
     NSString *successMessage = [NSString stringWithFormat:@"Hello, %@!", username];
@@ -277,9 +274,8 @@ application and tests.
 Requirements
 ------------
 
-Subliminal has been tested with the latest Xcode (4.6.2), and currently requires 
-iOS 6.x. iOS 5 support is literally [in review](https://github.com/inkling/Subliminal/pull/11), 
-and iOS 7 support will be coming soon!
+Subliminal currently supports projects built using Xcode 5.0 and the iOS 7 SDK,
+and deployment targets running iOS 5.0 through 7.0.3.
 
 Continuous Integration
 ----------------------
@@ -294,8 +290,12 @@ To use `subliminal-test`, first:
 2. 	"Share" the "Integration Tests" scheme to make it available to the CI server: 
 	in Xcode, click "Product" -> "Schemes" -> "Manage Schemes…", click the "Shared" 
 	checkbox next to the scheme, and check the resulting file into source control.
-3. 	Enable GUI scripting: Open System Preferences and check "Enable Access for 
-	Assistive Devices in the Accessibility" preference pane.
+3.  Enable GUI scripting: if the test machine is running Mac OS X 10.8 Mountain
+	Lion, open System Preferences and check "Enable Access for Assistive Devices"
+	in the Accessibility preference pane.
+	If the test machine runs Mac OS X 10.9 Mavericks, open System Preferences and
+	click on "Security & Privacy". Select "Accessibility" and drag Terminal.app
+	from Applications/Utilities into the list. Do not forget to check the box.
 
 A minimal test runner would then look something like this: 
 
@@ -305,9 +305,11 @@ A minimal test runner would then look something like this:
 # Run the tests in the non-retina iPhone Simulator
 DEVICE="iPhone"
 
-# A bug in Instruments (http://openradar.appspot.com/radar?id=1544403) 
-# requires that the script be invoked with the current user's login password in order 
-# to run fully un-attended
+# Run the tests on iOS 7.0
+VERSION=7.0
+
+# Allow `subliminal-test` to work around bugs in Apple's `instruments` tool 
+# while running un-attended. See the FAQ for more information.
 PASSWORD="password1234"
 
 OUTPUT_DIR=reports
@@ -318,6 +320,7 @@ mkdir -p "$OUTPUT_DIR"
 "$PROJECT_DIR/Integration Tests/Subliminal/Supporting Files/CI/subliminal-test" \
 	-project "$YOUR_PROJECT" \
 	-sim_device "$DEVICE" \
+	-sim_version "$VERSION" \
 	-login_password "$PASSWORD" \
 	-output "$OUTPUT_DIR"
 ```
@@ -452,6 +455,31 @@ FAQ
 	SLButton *button = [SLButton buttonWithAccessibilityLabel:@"foo"];
 	[UIAElement(button) tap];	// vs. [button tap];
 	```
+*	Why does Subliminal say that an `SLElement` is not visible/tappable when I
+	can see it just fine?
+
+	It's likely that there are multiple objects in your application's view hierarchy
+	with the same accessibility information--Subliminal found a match for your
+	element, but not the one you intended (and the match it found is hidden
+	or offscreen).
+
+	Try calling `-logElement` on your element--does its description match what
+	you had expected? Maybe you find that Subliminal matched a label when you
+	meant to match a button. You can fix this by making your matching criteria
+	more specific, like by using `SLButton` instead of `SLElement`. You can
+	apply more complex criteria using `+[SLElement elementMatching:]`. If you want
+	to restrict matches to visible elements, for instance, you can do:
+
+	```objc
+	// at the top of your test class
+	#import <Subliminal/NSObject+SLVisibility.h>
+
+	// in a test case
+	SLElement *elementToMatch = [SLElement elementMatching:^BOOL(NSObject *obj) {
+		BOOL objIsVisible = [obj slAccessibilityIsVisible];
+		return objIsVisible && /* some other criteria */;
+	}];
+	```
 
 *	How can I debug tests while running?
 
@@ -475,6 +503,68 @@ FAQ
 		to break immediately after launch, you may find it useful to give yourself 
 		time to attach the debugger by setting `-[SLTestController shouldWaitToStartTesting]` 
 		to `YES`.
+
+### Continuous Integration
+
+*	Why does the `subliminal-test` script require my login password?
+
+	`subliminal-test` can work around several bugs in Apple's `instruments` tool, 
+	but only with superuser privileges. Providing your password lets the script 
+	run un-attended. The password is used:
+
+	1.	To authorize `instruments` to take control of your application if it asks 
+		for such permission when launched: http://openradar.appspot.com/radar?id=1544403.
+	2.	To temporarily modify the Xcode folder to force `instruments` to use the 
+		specified SDK to run the tests, whereas it would otherwise use
+		an arbitrary SDK: http://openradar.appspot.com/radar?id=3107401.
+
+	`subliminal-test` cannot itself be run with superuser privileges because 
+	`instruments` only works properly if it is run as the user.
+
+	If a developer will be attending the tests as they execute (for instance on 
+	their local machine rather than on the build server), and so can enter their 
+	password as required, they may execute `subliminal-test` with the `--live` option.
+
+Known Issues
+------------
+
+> This section is reserved for issues that Subliminal cannot resolve, due to 
+limitations of Apple's frameworks or bugs therein. Other issues are tracked 
+[here](https://github.com/inkling/Subliminal/issues).
+
+* 	UIAutomation reports that scroll views are never tappable in applications 
+	running on iPad simulators or devices running iOS 5.x.
+
+	On such platforms, Subliminal attempts to interact with scroll views despite 
+	UIAutomation reporting that they are not tappable--whereas on other platforms 
+	(not iPad, or not running iOS 5.x), Subliminal requires that elements be tappable 
+	before interaction can proceed.
+
+	Testing reveals that tapping scroll views on an iPad simulator or device 
+	running iOS 5.x will fail, but dragging will succeed. Also, UIAutomation 
+	correctly reports scroll view child elements as tappable regardless of platform.
+
+*	UIAutomation cannot drag scroll views when running in the iOS 7 Simulator.
+
+	`SLElement` implements a workaround.
+	
+	This issue also affects swiping table view cells since they [now internally use a
+	scroll view](http://www.curiousfind.com/blog/646) to implement the 'swipe-to-delete' 
+	behavior. Using drag gestures will tap the cell but **not** show the deletion 
+	confirmation button in the iOS 7 Simulator. Unfortunately, Subliminal cannot work
+	around this issue at this time.
+
+	> Note: The implementation of the workaround uses a private API. _However_, 
+	this poses no risk of discovery by Apple's review team (to projects linking Subliminal) 
+	because the workaround is only compiled for the Simulator.
+
+*	Tests occasionally fail to launch when using Xcode 5.x and/or the 6.1 Simulator and/or Mavericks.
+
+	When using Xcode 5.0, Instruments may fail to launch tests in 6.1 simulators, 
+	saying "Target application is not frontmost." This issue can be resolved in 
+	the GUI by quitting the simulator, then pressing record again. When running 
+	the tests from the command line, `subliminal-test` will detect `instruments`' 
+	failure and retry.
 
 Contributing
 ------------

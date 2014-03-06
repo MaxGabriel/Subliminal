@@ -56,4 +56,9 @@
     }
 }
 
+// prevent test case views from laying out under the nav bar on iOS 7
+- (UIRectEdge)edgesForExtendedLayout {
+    return UIRectEdgeNone;
+}
+
 @end

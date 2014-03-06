@@ -39,8 +39,12 @@
     UIView *view = [[UIView alloc] initWithFrame:CGRectZero];
     const CGRect kTextFieldFrame = (CGRect){CGPointZero, CGSizeMake(100.0f, 30.0f)};
     if (testCase == @selector(testSetText) ||
+        testCase == @selector(testSetTextCanHandleTapHoldCharacters) ||
+        testCase == @selector(testSetTextClearsCurrentText) ||
         testCase == @selector(testSetTextWhenFieldClearsOnBeginEditing) ||
         testCase == @selector(testGetText) ||
+        testCase == @selector(testDoNotMatchEditorAccessibilityObjects) ||
+        testCase == @selector(testClearTextButton) ||
         // we'll test that we match the searchBar *and not* the textField
         testCase == @selector(testMatchesSearchBarTextField)) {
         
@@ -57,6 +61,7 @@
         [view addSubview:_searchBar];
     } else if (testCase == @selector(testMatchesWebTextField) ||
                testCase == @selector(testSetWebTextFieldText) ||
+               testCase == @selector(testSetWebTextFieldTextClearsCurrentText) ||
                testCase == @selector(testGetWebTextFieldText)) {
         _webView = [[UIWebView alloc] initWithFrame:view.bounds];
         _webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -84,12 +89,16 @@
 
     _textField.accessibilityLabel = @"test element";
     _textField.borderStyle = UITextBorderStyleRoundedRect;
-    if (self.testCase == @selector(testSetTextWhenFieldClearsOnBeginEditing)) {
+    if (self.testCase == @selector(testClearTextButton)) {
+        _textField.clearButtonMode = UITextFieldViewModeAlways;
+    } else if (self.testCase == @selector(testSetTextWhenFieldClearsOnBeginEditing)) {
         _textField.clearsOnBeginEditing = YES;
     }
 
     if (self.testCase != @selector(testSetText) &&
-        self.testCase != @selector(testSetTextWhenFieldClearsOnBeginEditing)) {
+        self.testCase != @selector(testSetTextClearsCurrentText) &&
+        self.testCase != @selector(testSetTextWhenFieldClearsOnBeginEditing) &&
+        self.testCase != @selector(testDoNotMatchEditorAccessibilityObjects)) {
         _textField.text = @"foo";
     }
 
@@ -116,11 +125,15 @@
 - (void)viewWillLayoutSubviews {
     [super viewWillLayoutSubviews];
 
-    _textField.center = self.view.center;
+    // move the textfield above the keyboard
+    static const CGFloat kTextFieldVerticalOffset = -40.0f;
+
+    CGPoint textFieldCenter = CGPointMake(self.view.center.x, self.view.center.y + kTextFieldVerticalOffset);
+    _textField.center = textFieldCenter;
     if (_textField) {
         _searchBar.center = CGPointMake(_textField.center.x, _textField.center.y - 50.0f);
     } else {
-        _searchBar.center = self.view.center;
+        _searchBar.center = textFieldCenter;
     }
 }
 
@@ -129,8 +142,12 @@
 - (NSString *)text {
     NSString *text;
     if (self.testCase == @selector(testSetText) ||
+        self.testCase == @selector(testSetTextCanHandleTapHoldCharacters) ||
+        self.testCase == @selector(testSetTextClearsCurrentText) ||
         self.testCase == @selector(testSetTextWhenFieldClearsOnBeginEditing) ||
-        self.testCase == @selector(testGetText)) {
+        self.testCase == @selector(testGetText) ||
+        self.testCase == @selector(testDoNotMatchEditorAccessibilityObjects) ||
+        self.testCase == @selector(testClearTextButton)) {
         text = _textField.text;
     } else if (self.testCase == @selector(testMatchesSearchBarTextField) ||
                self.testCase == @selector(testSetSearchBarText) ||
@@ -138,6 +155,7 @@
         text = _searchBar.text;
     } else if (self.testCase == @selector(testMatchesWebTextField) ||
                self.testCase == @selector(testSetWebTextFieldText) ||
+               self.testCase == @selector(testSetWebTextFieldTextClearsCurrentText) ||
                self.testCase == @selector(testGetWebTextFieldText)) {
         text = [_webView stringByEvaluatingJavaScriptFromString:@"getText()"];
     }

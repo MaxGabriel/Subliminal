@@ -29,9 +29,49 @@
     return [[self alloc] initWithUIARepresentation:@"UIATarget.localTarget().frontMostApp().keyboard()"];
 }
 
-- (void)typeString:(NSString *)string { 
-    [self waitUntilTappable:YES
-            thenSendMessage:@"typeString('%@')", [string slStringByEscapingForJavaScriptLiteral]];
+- (void)typeString:(NSString *)string {
+    /*
+     The following bugs prevent `UIAKeyboard.typeString` from working correctly:
+     
+        *   in versions of iOS prior to 6.0, the function throws an exception
+            when asked to type strings longer than one character
+        *   on iOS 7, certain characters are mistyped--incorrectly capitalized, skipped entirely,
+            or reported as not tappable
+
+     We work around these by sending a separate `typeString` message
+     for each character of the string to be typed.
+     */
+    NSString *escapedString = [string slStringByEscapingForJavaScriptLiteral];
+    if ((kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_5_1) &&
+        (kCFCoreFoundationVersionNumber <= kCFCoreFoundationVersionNumber_iOS_6_1)) {
+        [self waitUntilTappable:YES
+                thenSendMessage:@"typeString('%@')", escapedString];
+    } else {
+        NSString *quotedString = [NSString stringWithFormat:@"'%@'", escapedString];
+        [self waitUntilTappable:YES thenPerformActionWithUIARepresentation:^(NSString *UIARepresentation) {
+            // execute the typeString loop entirely within JavaScript, for improved performance
+            [[SLTerminal sharedTerminal] evalFunctionWithName:@"SLKeyboardTypeString"
+                                                       params:@[ @"keyboard", @"string" ]
+                                                         body:@"for (var i = 0; i < string.length; i++) {\
+                                                                    keyboard.typeString(string[i]);\
+                                                                }"
+                                                     withArgs:@[ UIARepresentation, quotedString ]];
+        } timeout:[[self class] defaultTimeout]];
+    }
+}
+
+- (void)typeString:(NSString *)string withSetValueFallbackUsingElement:(SLUIAElement *)element {
+    @try {
+        [self typeString:string];
+    } @catch (id exception) {
+        [[SLLogger sharedLogger] logWarning:[NSString stringWithFormat:@"-[SLKeyboard typeString:] will fall back on UIAElement.setValue due to an exception in UIAKeyboard.typeString: %@", exception]];
+        [element waitUntilTappable:YES thenSendMessage:@"setValue('%@')", [string slStringByEscapingForJavaScriptLiteral]];
+    }
+}
+
+- (void)hide
+{
+    [[SLKeyboardKey elementWithAccessibilityLabel:(@"Hide keyboard")] tap];
 }
 
 @end

@@ -171,22 +171,48 @@
  become tappable within that interval, the method will raise an 
  `SLUIAElementNotTappableException`.
  
+ This method returns, or raises an `SLUIAElementInvalidException`, immediately.
+ 
  Use of the `UIAElement` macro can help tests diagnose tappability failures.
  
  @warning [Visibility](-isVisible) correlates very closely with tappability, 
  but in some circumstances, an element may be tappable even if it is not visible, 
- and vice versa, due to bugs in `UIAutomation`. See the implementation for details.
+ and vice versa, due to bugs in UIAutomation. See the implementation for details.
  Tests should assert visibility separately if desired.
+ 
+ @bug UIAutomation reports that scroll views are never tappable in applications 
+ running on iPad simulators or devices running iOS 5.x. On such platforms, Subliminal 
+ attempts to interact with scroll views despite UIAutomation reporting that they 
+ are not tappable. Testing reveals that tapping scroll views on an iPad simulator 
+ or device running iOS 5.x will fail, but dragging will succeed (barring factors 
+ like the scroll view actually being hidden or having user interaction disabled, 
+ etc.).
+ 
+ UIAutomation correctly reports scroll view child elements as tappable 
+ regardless of platform.
 
  @return `YES` if it is possible to tap on or otherwise interact with the user
  interface element represented by the specified element, `NO` otherwise.
  
- @exception SLUIAElementInvalidException Raised if the element is not valid
- by the end of the [default timeout](+defaultTimeout).
-
+ @exception SLUIAElementInvalidException Raised if the element is not currently
+ valid.
+ 
  @see -isValid
  */
 - (BOOL)isTappable;
+
+/**
+ Determines whether the specified element currently receives keyboard input.
+
+ That is, whether the receiver is first responder.
+ 
+ @return `YES` if the user interface element represented by the specified element 
+ is the current receiver of keyboard input, `NO` otherwise.
+ 
+ @exception SLUIAElementInvalidException Raised if the element is not currently
+ valid.
+ */
+- (BOOL)hasKeyboardFocus;
 
 #pragma mark - Gestures and Actions
 /// ----------------------------------------
@@ -198,6 +224,14 @@
  
  The tap occurs at the element's [hitpoint](-hitpoint).
  
+ @bug This method will fail if the specified element identifies a scroll view
+ in an application running on an iPad simulator or device running iOS 5.x, due 
+ to a bug in UIAutomation (see -isTappable). An `SLTerminalJavaScriptException` 
+ will be raised in such a scenario.
+ 
+ UIAutomation is able to tap on scroll view child elements 
+ regardless of platform.
+
  @exception SLUIAElementInvalidException Raised if the element is not valid
  by the end of the [default timeout](+defaultTimeout).
  
@@ -206,6 +240,33 @@
  becomes valid elapses.
  */
 - (void)tap;
+
+/**
+ Double-taps the specified element.
+ 
+ @bug This method will fail if the specified element identifies a scroll view
+ in an application running on an iPad simulator or device running iOS 5.x, due
+ to a bug in UIAutomation (see -isTappable). An `SLTerminalJavaScriptException`
+ will be raised in such a scenario.
+
+ UIAutomation is able to double-tap scroll view child elements
+ regardless of platform.
+ 
+ @exception SLUIAElementInvalidException Raised if the element is not valid
+ by the end of the [default timeout](+defaultTimeout).
+
+ @exception SLUIAElementNotTappableException Raised if the element is not tappable
+ when whatever amount of time remains of the default timeout after the element
+ becomes valid elapses.
+ */
+- (void)doubleTap;
+
+/**
+ Touches and holds the specified element.
+
+ @param duration The duration for the touch.
+ */
+- (void)touchAndHoldWithDuration:(NSTimeInterval)duration;
 
 /**
  Drags within the bounds of the specified element.
@@ -218,6 +279,10 @@
  This method uses a drag duration of 1.0 seconds (the documented default duration 
  for touch-and-hold gestures according to Apple's `UIAElement` class reference).
  
+ @bug On simulators running iOS 7.x, UIAutomation drag gestures do not cause
+ scroll views to scroll. Instances of `SLElement` are able to work around this; 
+ instances of `SLStaticElement` are not.
+
  @param startOffset The offset, within the element's rect, at which to begin 
  dragging.
  @param endOffset The offset, within the element's rect, at which to end dragging.
@@ -276,8 +341,10 @@
 /**
  Returns the screen position to tap for the element.
  
- This is the midpoint of the element's `-rect`, unless that point cannot be tapped,
- in which case this method returns an alternate point, if possible.
+ Below iOS 7, this defaults to the midpoint of the element's `-rect`;
+ at or above iOS 7, this defaults to the element's [accessibility activation point](-[NSObject (UIAccessibility) accessibilityActivationPoint]).
+ 
+ If the default hitpoint cannot be tapped, this method returns an alternate point, if possible.
  
  @return The position to tap for the user interface element represented by the 
  specified element, in screen coordinates, or `SLCGPointNull` if such a position 
@@ -332,6 +399,28 @@
  */
 - (void)logElementTree;
 
+#pragma mark - Screenshots
+/// ----------------------------------------
+/// @name Screenshot an element
+/// ----------------------------------------
+
+/**
+ Takes a screenshot of the specified element.
+
+ The image is viewable from the UIAutomation debug log in Instruments.
+
+ When running `subliminal-test` from the command line, the images are also saved
+ as PNGs within the specified output directory.
+
+ @param filename An optional string to use as the name for the resultant image file (provide nil to use a generic name.).
+
+ @exception SLUIAElementInvalidException Raised if the element is not valid
+ by the end of the [default timeout](+defaultTimeout).
+
+ */
+
+- (void)captureScreenshotWithFilename:(NSString *)filename;
+
 @end
 
 
@@ -340,12 +429,15 @@
 /// All exceptions thrown by SLUIAElement will have names beginning with this prefix.
 extern NSString *const SLUIAElementExceptionNamePrefix;
 
-/// Thrown if an element is messaged which it is [invalid](-isValid).
+/// Thrown if an element is messaged while it is [invalid](-isValid).
 extern NSString *const SLUIAElementInvalidException;
 
 /// Thrown if tests attempt to simulate user interaction with an element
 /// while that element is not [tappable](-isTappable).
 extern NSString *const SLUIAElementNotTappableException;
+
+/// Thrown if the Automation instrument is unable to interpret a command from the tests.
+extern NSString *const SLUIAElementAutomationException;
 
 /// `SLUIAElement` waits for this duration between checks of an element's
 /// validity, tappability, etc.

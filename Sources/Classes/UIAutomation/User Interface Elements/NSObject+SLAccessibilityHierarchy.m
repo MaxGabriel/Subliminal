@@ -96,12 +96,43 @@
 
 - (NSArray *)slChildAccessibilityElementsFavoringSubviews:(BOOL)favoringSubviews {
     NSMutableArray *children = [NSMutableArray array];
-    NSInteger count = [self accessibilityElementCount];
-    if (count != NSNotFound && count > 0) {
-        for (NSInteger i = 0; i < count; i++) {
-            [children addObject:[self accessibilityElementAtIndex:i]];
+    // Certain accessibility containers, like those that mock table view headers,
+    // may contain "stale" accessibility elements: elements which initially carry no information,
+    // but when queried (for some accessibility property) cause their container to reload
+    // and replace _all_ of its elements.
+    // We ensure we return valid children by asking for the accessibility label of each element,
+    // then checking if the container yet vends that element--if it doesn't, we retrieve all children again.
+    BOOL shouldReloadChildren, haveReloadedChildren = NO;
+    do {
+        shouldReloadChildren = NO;
+        NSInteger count = [self accessibilityElementCount];
+        if (count != NSNotFound && count > 0) {
+            for (NSInteger i = 0; i < count; i++) {
+                id element = [self accessibilityElementAtIndex:i];
+                if (!element) {
+                    dispatch_async([[SLLogger sharedLogger] loggingQueue], ^{
+                        NSString *message = [NSString stringWithFormat:@"accessibilityElementAtIndex: %d is nil for %@", i, self];
+                        [[SLLogger sharedLogger] logWarning:message];
+                    });
+                    continue;
+                }
+                (void)[element accessibilityLabel];
+                if (element != [self accessibilityElementAtIndex:i]) {
+                    // Protect against tests entering an infinite loop,
+                    // in case there's any scenario where the hierarchy might not stabilize.
+                    if (haveReloadedChildren) {
+                        SLLogAsync(@"The accessibility hierarchy is unstable: the accessibility children of %@ are likely invalid.", self);
+                    } else {
+                        shouldReloadChildren = YES, haveReloadedChildren = YES;
+                        [children removeAllObjects];
+                        break;
+                    }
+                }
+                
+                [children addObject:element];
+            }
         }
-    }
+    } while (shouldReloadChildren);
     return children;
 }
 
@@ -155,6 +186,23 @@
         }
         parent = [parent slAccessibilityParent];
     }
+
+    // Text fields (when they are editing) and text views (all the time) render their text
+    // using something like a web view, which vends an accessibility element--inheriting from `NSObject` though,
+    // not `UIAccessibilityElement`--which element represents the current text.
+    // This element is not recognized by UIAutomation.
+    if (([self accessibilityTraits] & UIAccessibilityTraitStaticText) &&
+        ![self isKindOfClass:[UIAccessibilityElement class]] &&
+        ![self isKindOfClass:[UIView class]]) {
+        // if we're within a text field or text view, abort
+        parent = [self slAccessibilityParent];
+        while (parent &&
+               !([parent isKindOfClass:[UITextField class]] || [parent isKindOfClass:[UITextView class]])) {
+            parent = [parent slAccessibilityParent];
+        }
+        if (parent) return YES;
+    }
+    
     return NO;
 }
 
@@ -211,10 +259,6 @@
     }
     if (isTableViewSectionElement) return YES;
 
-    // _UIPopoverView is identified by its parent's label.
-    BOOL isPopover = [[parent accessibilityLabel] isEqualToString:@"dismiss popup"];
-    if (isPopover) return YES;
-
     return NO;
 }
 
@@ -242,8 +286,20 @@
     }
 }
 
-// An object is a mock view if its accessibilityIdentifier tracks
-// the accessibilityIdentifier of the view.
+- (BOOL)classForcesPresenceInAccessibilityHierarchy {
+    if ([super classForcesPresenceInAccessibilityHierarchy]) return YES;
+
+    // Identify _UIPopoverView by its first subview being a popover background view.
+    BOOL isPopover = NO;
+    if ([self.subviews count]) {
+        isPopover = [self.subviews[0] isKindOfClass:[UIPopoverBackgroundView class]];
+    }
+    return isPopover;
+}
+
+// An object is a mock view if its `accessibilityIdentifier` tracks
+// the `accessibilityIdentifier` of the view, or, failing that,
+// if its occupies the same region of the same accessibility parent.
 + (BOOL)elementObject:(id)elementObject isMockingViewObject:(id)viewObject {
     if (![viewObject isKindOfClass:[UIView class]]) {
         return NO;
@@ -260,6 +316,15 @@
 
     view.accessibilityIdentifier = previousIdentifier;
 
+    if (!isMocking) {
+        // On iOS 6.1, instances of `UITableViewSectionElement` do not track the `accessibilityIdentifier`s of the views they mock.
+        // We don't actually manipulate the accessibility frame of the `viewObject` because
+        // we might break that property's syncing with the `viewObject`'s `frame`.
+        if ([elementObject slAccessibilityParent] == [viewObject slAccessibilityParent]) {
+            isMocking = CGRectEqualToRect([elementObject accessibilityFrame], [viewObject accessibilityFrame]);
+        }
+    }
+
     return isMocking;
 }
 
@@ -269,6 +334,11 @@
     if ([self classForcesPresenceOfMockingViewsInAccessibilityHierarchy]) {
         return YES;
     }
+
+    // table view headers--which need not themselves be accessible to be mocked
+    // (so long as they contain accessible elements)
+    // and, unlike table view cells, are not necessarily of any particular class
+    if ([[self slAccessibilityParent] isKindOfClass:[UITableView class]]) return YES;
 
     return NO;
 }
@@ -316,7 +386,28 @@
 @end
 
 
+@implementation UIWebView (SLAccessibilityHierarchy)
+- (BOOL)classForcesPresenceInAccessibilityHierarchy {
+    return YES;
+}
+@end
+
+
+@implementation UITabBar (SLAccessibilityHierarchy)
+- (BOOL)classForcesPresenceInAccessibilityHierarchy {
+    return YES;
+}
+@end
+
+
 @implementation UIToolbar (SLAccessibilityHierarchy)
+- (BOOL)classForcesPresenceInAccessibilityHierarchy {
+    return YES;
+}
+@end
+
+
+@implementation UIActionSheet (SLAccessibilityHierarchy)
 - (BOOL)classForcesPresenceInAccessibilityHierarchy {
     return YES;
 }

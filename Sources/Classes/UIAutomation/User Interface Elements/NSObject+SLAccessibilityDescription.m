@@ -39,24 +39,36 @@
     [properties addObject:[NSString stringWithFormat:@"%@: %p", NSStringFromClass([self class]), self]];
     CGRect frame = [self accessibilityFrame];
     [properties addObject:[NSString stringWithFormat:@"frame = (%g %g; %g %g)", frame.origin.x, frame.origin.y, frame.size.width, frame.size.height]];
-    if ([self.accessibilityLabel length]) {
-        [properties addObject:[NSString stringWithFormat:@"label = '%@'", [self.accessibilityLabel slStringByEscapingForJavaScriptLiteral]]];
-    }
     if ([self respondsToSelector:@selector(accessibilityIdentifier)]) {
         NSString *identifier = [(id)self accessibilityIdentifier];
         if ([identifier length]) {
             [properties addObject:[NSString stringWithFormat:@"id = '%@'", [identifier slStringByEscapingForJavaScriptLiteral]]];
         }
     }
-    if ([self.accessibilityValue length]) {
-        [properties addObject:[NSString stringWithFormat:@"value = '%@'", [self.accessibilityValue slStringByEscapingForJavaScriptLiteral]]];
+    if ([self.accessibilityLabel length]) {
+        [properties addObject:[NSString stringWithFormat:@"label = '%@'", [self.accessibilityLabel slStringByEscapingForJavaScriptLiteral]]];
+    }
+    // in iOS 6.1 (at least), `UITextView` returns an attributed string from `-accessibilityValue`
+    // as does `UISearchBarTextField` in iOS 7  >.<
+    id accessibilityValue = self.accessibilityValue;
+    if ([accessibilityValue isKindOfClass:[NSAttributedString class]]) {
+        accessibilityValue = [accessibilityValue string];
+    }
+    if ([accessibilityValue length]) {
+        [properties addObject:[NSString stringWithFormat:@"value = '%@'", [accessibilityValue slStringByEscapingForJavaScriptLiteral]]];
+    }
+    if ([self.accessibilityHint length]) {
+        [properties addObject:[NSString stringWithFormat:@"hint = '%@'", [self.accessibilityHint slStringByEscapingForJavaScriptLiteral]]];
     }
 
     UIAccessibilityTraits traits = self.accessibilityTraits;
     NSMutableArray *traitNames = [NSMutableArray array];
     if (traits & UIAccessibilityTraitButton)                  [traitNames addObject:@"Button"];
     if (traits & UIAccessibilityTraitLink)                    [traitNames addObject:@"Link"];
-    if (traits & UIAccessibilityTraitHeader)                  [traitNames addObject:@"Header"];
+    // UIAccessibilityTraitHeader is only available starting in iOS 6
+    if (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_5_1) {
+        if (traits & UIAccessibilityTraitHeader)                  [traitNames addObject:@"Header"];
+    }
     if (traits & UIAccessibilityTraitSearchField)             [traitNames addObject:@"Search Field"];
     if (traits & UIAccessibilityTraitImage)                   [traitNames addObject:@"Image"];
     if (traits & UIAccessibilityTraitSelected)                [traitNames addObject:@"Selected"];

@@ -7,10 +7,16 @@
 //
 
 #import "TestUtilities.h"
+#import <OCMock/OCMock.h>
 
 void SLRunTestsAndWaitUntilFinished(NSSet *tests, void (^completionBlock)()) {
+    SLRunTestsUsingSeedAndWaitUntilFinished(tests, SLTestControllerRandomSeed, completionBlock);
+}
+
+void SLRunTestsUsingSeedAndWaitUntilFinished(NSSet *tests, unsigned int seed, void (^completionBlock)()) {
     __block BOOL testingHasFinished = NO;
     [[SLTestController sharedTestController] runTests:tests
+                                            usingSeed:seed
                                   withCompletionBlock:^{
                                       if (completionBlock) completionBlock();
                                       testingHasFinished = YES;
@@ -86,6 +92,28 @@ void SLRunTestsAndWaitUntilFinished(NSSet *tests, void (^completionBlock)()) {
 - (void)slAssertNoThrow:(void (^)(void))expression {
     NSParameterAssert(expression);
     SLAssertNoThrow(expression(), nil);
+}
+
+- (void)slFailWithExceptionRecordedByUIAElementMacro:(NSException *)exception
+                                thrownBySLUIAElement:(BOOL)haveSLUIAElementThrow
+                                          atFilename:(NSString *__autoreleasing *)filename lineNumber:(int *)lineNumber {
+    NSParameterAssert(exception);
+    NSParameterAssert(filename);
+    NSParameterAssert(lineNumber);
+
+    // create a fake element to tap, optionally throwing the exception with which this test case should fail
+    id mockElement = [OCMockObject niceMockForClass:[SLUIAElement class]];
+    if (haveSLUIAElementThrow) {
+        [[[mockElement stub] andThrow:exception] tap];
+    }
+
+    // purposefully put everything below on one line
+    // so that we return by-reference the same filename and line number that `UIAElement` records
+    *filename = [@(__FILE__) lastPathComponent]; *lineNumber = __LINE__; [UIAElement(mockElement) tap];
+
+    NSAssert(!haveSLUIAElementThrow,
+             @"If `haveSLUIAElementThrow` was `YES`, this method should have already thrown an exception.");
+    [exception raise];
 }
 
 @end

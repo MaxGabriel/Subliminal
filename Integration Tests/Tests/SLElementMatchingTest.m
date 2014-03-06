@@ -42,12 +42,19 @@
         SLAskApp(removeFooButtonFromSuperview);
     } else if (testCaseSelector == @selector(testElementWithAccessibilityLabelValueTraits)) {
         SLAskApp(applyUniqueTraitToFooButton);
+    } else if (testCaseSelector == @selector(testMatchingWebViewChildElements_iPhone)) {
+        SLAssertTrueWithTimeout(SLAskAppYesNo(webViewDidFinishLoad), 5.0,
+                                @"Webview did not load test HTML.");
     }
 }
 
 - (void)tearDownTestCaseWithSelector:(SEL)testCaseSelector {
-    if (testCaseSelector == @selector(testMatchingPopoverChildElement_iPad)) {
+    // popovers must be hidden before they are deallocated or else will raise an exception
+    if ((testCaseSelector == @selector(testMatchingPopoverChildElement_iPad)) ||
+        (testCaseSelector == @selector(testMatchingButtonsOfActionSheetsInPopovers_iPad))){
         SLAskApp(hidePopover);
+    } else if (testCaseSelector == @selector(testMatchingActionSheetButtons)) {
+        SLAskApp(hideActionSheet);
     }
     [super tearDownTestCaseWithSelector:testCaseSelector];
 }
@@ -77,6 +84,14 @@
                  @"Should have matched the button with label 'foo' again.");
 }
 
+// Reading an element's value is a process involving JS execution, with some variability:
+// +/- one `SLElementRetryDelay`, two `SLTerminalReadRetryDelays` (one for
+// SLTerminal.js receiving the command and one for SLTerminal receiving the result),
+// and one `SLTerminalEvaluationDelay` to evaluate the command.
+- (NSTimeInterval)waitDelayVariability {
+    return SLUIAElementWaitRetryDelay + (SLTerminalReadRetryDelay * 2) + SLTerminalEvaluationDelay;
+}
+
 - (void)testElementsWaitToMatchValidObjects {
     SLElement *fooButton = [SLElement elementWithAccessibilityLabel:@"foo"];
     // isValid returns immediately, and doesn't throw if the element is invalid
@@ -94,8 +109,8 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < SLUIAElementWaitRetryDelay,
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariability],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
 
     SLAssertTrue([fooButtonValue isEqualToString:@"fooValue"],
@@ -118,8 +133,8 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < SLUIAElementWaitRetryDelay,
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariability],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
 }
 
@@ -254,7 +269,16 @@
 // the elements tested, because it uses mobile-optimized HTML.
 - (void)testMatchingWebViewChildElements_iPhone {
     SLElement *openMenuLink = [SLElement elementMatching:^BOOL(NSObject *obj) {
-        return [obj.accessibilityHint isEqualToString:@"Open main menu"];
+        // below iOS 7, the value of a link tag's `title` attribute would become the `accessibilityHint`
+        // of its corresponding accessibility element
+        // at or above iOS 7, when the link tag is empty, the attribute's value becomes the `accessibilityLabel` of the element
+        // and there is no hint (see for comparison the memorabilia link below)
+        NSString *openMenuLinkTitle = @"Open main menu";
+        if (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_6_1) {
+            return [obj.accessibilityLabel isEqualToString:openMenuLinkTitle];
+        } else {
+            return [obj.accessibilityHint isEqualToString:openMenuLinkTitle];
+        }
     } withDescription:@"Open main menu link"];
     
     CGRect expectedOpenMenuLinkFrame = CGRectMake(0.0f, 63.0f, 40.0f, 46.0f);
@@ -275,8 +299,17 @@
     SLAssertTrue([[UIAElement(title) label] isEqualToString:@"Inklings"],
                  @"Could not match element in webview.");
 
-    SLElement *memorabiliaLink = [SLElement elementWithAccessibilityLabel:@"memorabilia"];
-    SLAssertTrue([[UIAElement(memorabiliaLink) label] isEqualToString:@"memorabilia"],
+    // below iOS 7, a link tag's contents would become the `accessibilityLabel` of its corresponding
+    // accessibility element, full stop.
+    // at or above iOS 7, if a link tag is non-empty _and_ the link tag has a non-empty `title` attribute,
+    // the value of that attribute gets tacked onto the end of the label (and then separately also becomes
+    // the `accessibilityHint` of the element).
+    NSString *memorabiliaLabel = @"memorabilia";
+    if (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_6_1) {
+        memorabiliaLabel = [memorabiliaLabel stringByAppendingString:@", Memorabilia"];
+    }
+    SLElement *memorabiliaLink = [SLElement elementWithAccessibilityLabel:memorabiliaLabel];
+    SLAssertTrue([[UIAElement(memorabiliaLink) label] isEqualToString:memorabiliaLabel],
                  @"Could not match element in webview.");
 }
 
@@ -289,6 +322,38 @@
     SLElement *fooButtonInPopover = [SLElement elementWithAccessibilityLabel:@"fooInPopover"];
     SLAssertTrue([[UIAElement(fooButtonInPopover) label] isEqualToString:@"fooInPopover"],
                  @"Could not match button in popover.");
+}
+
+#pragma mark - Tab bar buttons
+
+- (void)testMatchingTabBarButtons {
+    NSString *actualLabel, *expectedLabel = @"Favorites";
+    SLButton *favoritesButton = [SLButton elementWithAccessibilityLabel:expectedLabel];
+    SLAssertNoThrow(actualLabel = [UIAElement(favoritesButton) label], @"Could not retrieve button's label.");
+    SLAssertTrue([actualLabel isEqualToString:expectedLabel], @"Did not match button as expected.");
+}
+
+#pragma mark - Action sheets
+
+- (void)testMatchingActionSheetButtons {
+    SLAskApp(showActionSheet);
+
+    NSString *actualLabel, *expectedLabel = @"Cancel";
+    SLButton *cancelButton = [SLButton elementWithAccessibilityLabel:expectedLabel];
+    SLAssertNoThrow(actualLabel = [UIAElement(cancelButton) label], @"Could not retrieve button's label.");
+    SLAssertTrue([actualLabel isEqualToString:expectedLabel], @"Did not match button as expected.");
+}
+
+// Somewhat of an internal test--when a popover shows an action sheet,
+// that changes the popover's accessibility structure in a way that
+// once caused Subliminal to misidentify the action sheet
+- (void)testMatchingButtonsOfActionSheetsInPopovers_iPad {
+    SLAskApp(showPopoverWithActionSheet);
+
+    NSString *actualLabel, *expectedLabel = @"Popover Cancel";
+    SLButton *cancelButton = [SLButton elementWithAccessibilityLabel:expectedLabel];
+    SLAssertNoThrow(actualLabel = [UIAElement(cancelButton) label], @"Could not retrieve button's label.");
+    SLAssertTrue([actualLabel isEqualToString:expectedLabel], @"Did not match button as expected.");
 }
 
 #pragma mark - Internal tests
@@ -356,6 +421,15 @@
 
     SLAssertTrue([SLAskApp(fooButtonIdentifier) isEqualToString:originalIdentifier],
                  @"After being matched, an object's identifier should have been restored.");
+}
+
+- (void)testSubliminalReloadsTheAccessibilityHierarchyAsNecessaryWhenMatching {
+    SLElement *fooLabel = [SLElement elementWithAccessibilityLabel:@"foo"];
+    SLAssertTrue([[UIAElement(fooLabel) label] isEqualToString:@"foo"], @"Could not match label.");
+
+    SLAskApp(invalidateAccessibilityHierarchy);
+
+    SLAssertTrue([[UIAElement(fooLabel) label] isEqualToString:@"foo"], @"Could not match label.");
 }
 
 @end

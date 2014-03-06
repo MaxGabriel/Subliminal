@@ -35,14 +35,10 @@
 
 @implementation SLTestTests {
     id _loggerMock, _terminalMock;
-    id _loggerClassMock;
 }
 
 - (void)setUp {
-    // Prevent the framework from trying to talk to UIAutomation.
-    _loggerMock = [OCMockObject niceMockForClass:[SLLogger class]];
-    _loggerClassMock = [OCMockObject partialMockForClassObject:[SLLogger class]];
-    [[[_loggerClassMock stub] andReturn:_loggerMock] sharedLogger];
+    _loggerMock = [OCMockObject partialMockForObject:[SLLogger sharedLogger]];
 
     // ensure that Subliminal doesn't get hung up trying to talk to UIAutomation
     _terminalMock = [OCMockObject partialMockForObject:[SLTerminal sharedTerminal]];
@@ -53,7 +49,6 @@
 - (void)tearDown {
     [_terminalMock stopMocking];
     [_loggerMock stopMocking];
-    [_loggerClassMock stopMocking];
 }
 
 #pragma mark - Test lookup
@@ -92,6 +87,17 @@
 
     Class undefinedTestClass = [SLTest testNamed:NSStringFromSelector(_cmd)];
     STAssertNil(undefinedTestClass, @"+testNamed: should not have found a test.");
+}
+
+- (void)testTestNamedReturnsFocusedTests {   // with or without the prefix
+    Class validTestClass = [Focus_TestThatIsFocused class];
+    
+    Class resultTestClass = [SLTest testNamed:NSStringFromClass(validTestClass)];
+    STAssertEqualObjects(resultTestClass, validTestClass, @"+testNamed: should have found the test.");
+
+    NSString *unprefixedTestClassName = [NSStringFromClass(validTestClass) substringFromIndex:[SLTestFocusPrefix length]];
+    resultTestClass = [SLTest testNamed:unprefixedTestClassName];
+    STAssertEqualObjects(resultTestClass, validTestClass, @"+testNamed: should have found the test even without the prefix.");
 }
 
 #pragma mark - Abstract tests
@@ -712,6 +718,64 @@
     STAssertNoThrow([failingTestMock verify], @"Test did not run as expected.");
 }
 
+- (void)runWithTestFailingInTestCaseSetupWithExpectedFailure:(BOOL)expectedFailureInSetup
+             andFailingInTestCaseTeardownWithExpectedFailure:(BOOL)expectedFailureInTeardown {
+    Class failingTestClass = [TestWithSomeTestCases class];
+    SEL failingTestCase = @selector(testOne);
+    id failingTestMock = [OCMockObject partialMockForClass:failingTestClass];
+    OCMExpectationSequencer *failingTestSequencer = [OCMExpectationSequencer sequencerWithMocks:@[ failingTestMock, _loggerMock ]];
+
+    NSException *(^exceptionWithReason)(BOOL, NSString *) = ^(BOOL expected, NSString *reason) {
+        NSString *name = expected ? SLTestAssertionFailedException : NSInternalInconsistencyException;
+        return [NSException exceptionWithName:name reason:reason userInfo:nil];
+    };
+
+    // *** Begin expected test run
+
+    // If test case setup fails...
+    NSException *setUpException = exceptionWithReason(expectedFailureInSetup, @"Test case setup failed.");
+    [[[failingTestMock expect] andThrow:setUpException] setUpTestCaseWithSelector:failingTestCase];
+
+    // ...the test catches and logs the exception...
+    [[_loggerMock expect] logError:[OCMArg any]];
+
+    // ...and then if test case teardown fails...
+    NSException *tearDownException = exceptionWithReason(expectedFailureInTeardown, @"Test case teardown failed.");
+    [[[failingTestMock expect] andThrow:tearDownException] tearDownTestCaseWithSelector:failingTestCase];
+
+    // ...the test again catches and logs the exception...
+    [[_loggerMock expect] logError:[OCMArg any]];
+
+    // ...but when the test logs the test case as failing,
+    // that failure is reported as "expected" or not depending on the first exception (setup) thrown...
+    [[_loggerMock expect] logTest:NSStringFromClass(failingTestClass)
+                         caseFail:NSStringFromSelector(failingTestCase)
+                         expected:expectedFailureInSetup];
+
+    // ...and when the test controller reports the test finishing,
+    // that failure is reported as "expected" or not depending on the setup exception.
+    // The values for cases executed, etc. will need to be updated if the test class' definition changes.
+    [[_loggerMock expect] logTestFinish:NSStringFromClass(failingTestClass)
+                   withNumCasesExecuted:3 numCasesFailed:1 numCasesFailedUnexpectedly:(expectedFailureInSetup ? 0 : 1)];
+
+    // *** End expected test run
+
+    SLRunTestsAndWaitUntilFinished([NSSet setWithObject:failingTestClass], nil);
+    STAssertNoThrow([failingTestSequencer verify], @"Test did not run/messages were not logged in the expected sequence.");
+
+    // necessary so that subsequent invocations of this method,
+    // within the same turn of the event loop, can create new mocks
+    [failingTestSequencer stopSequencing];
+    [failingTestMock stopMocking];
+}
+
+- (void)testIfBothTestCaseSetupAndTeardownFailSetupFailureDeterminesExpectedStatus {
+    [self runWithTestFailingInTestCaseSetupWithExpectedFailure:YES andFailingInTestCaseTeardownWithExpectedFailure:YES];
+    [self runWithTestFailingInTestCaseSetupWithExpectedFailure:YES andFailingInTestCaseTeardownWithExpectedFailure:NO];
+    [self runWithTestFailingInTestCaseSetupWithExpectedFailure:NO andFailingInTestCaseTeardownWithExpectedFailure:YES];
+    [self runWithTestFailingInTestCaseSetupWithExpectedFailure:NO andFailingInTestCaseTeardownWithExpectedFailure:NO];
+}
+
 - (void)testIfTestCaseSetupFailsTestCaseDoesNotExecute {
     Class failingTestClass = [TestWithSomeTestCases class];
     SEL failingTestCase = @selector(testOne);
@@ -1025,7 +1089,10 @@
         } withTimeout:1.5], @"Assertion should not have failed.");
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        STAssertEqualsWithAccuracy(endTimeInterval, startTimeInterval, .01, @"Test should not have waited for an appreciable interval.");
+        // note that `SLAssertTrueWithTimeout` should not wait at all here, thus the variability
+        // is not `SLWaitUntilTrueRetryDelay` like the cases below
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval < .01, @"Test should not have waited for an appreciable interval.");
     }] testOne];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1052,8 +1119,9 @@
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
         // check that the test waited for about the amount of time for the condition to evaluate to true
-        STAssertEqualsWithAccuracy(endTimeInterval - startTimeInterval, truthTimeout, .25,
-                                   @"Test should have only waited for about the amount of time necessary for the condition to become true.");
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval - truthTimeout < SLWaitUntilTrueRetryDelay,
+                     @"Test should have only waited for about the amount of time necessary for the condition to become true.");
     }] testThree];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1075,8 +1143,9 @@
         } withTimeout:timeout], @"Assertion should have failed.");
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        STAssertEqualsWithAccuracy(endTimeInterval - startTimeInterval, timeout, .01,
-                                   @"Test should have waited for the specified timeout.");
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval - timeout < SLWaitUntilTrueRetryDelay,
+                     @"Test should have waited for the specified timeout.");
     }] testTwo];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1102,7 +1171,10 @@
         STAssertTrue(slWaitUntilTrueReturnValue, @"SLWaitUntilTrue should have returned YES");
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        STAssertEqualsWithAccuracy(endTimeInterval, startTimeInterval, .01, @"Test should not have waited for an appreciable interval.");
+        // note that `SLWaitUntilTrue` should not wait at all here, thus the variability
+        // is not `SLWaitUntilTrueRetryDelay` like the cases below
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval < .01, @"Test should not have waited for an appreciable interval.");
     }] testOne];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1132,8 +1204,9 @@
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
         // check that the test waited for about the amount of time for the condition to evaluate to true
-        STAssertEqualsWithAccuracy(endTimeInterval - startTimeInterval, truthTimeout, .25,
-                                   @"Test should have only waited for about the amount of time necessary for the condition to become true.");
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval - truthTimeout < SLWaitUntilTrueRetryDelay,
+                     @"Test should have only waited for about the amount of time necessary for the condition to become true.");
     }] testThree];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1158,8 +1231,9 @@
         STAssertFalse(slWaitUntilTrueReturnValue, @"SLWaitUntilTrue should have returned YES");
 
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        STAssertEqualsWithAccuracy(endTimeInterval - startTimeInterval, timeout, .01,
-                                   @"Test should have waited for the specified timeout.");
+        NSTimeInterval waitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(waitTimeInterval - timeout < SLWaitUntilTrueRetryDelay,
+                     @"Test should have waited for the specified timeout.");
     }] testTwo];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
@@ -1260,6 +1334,61 @@
 
 #pragma mark - Miscellaneous
 
+#pragma mark -UIAElement macro
+
+- (void)runWithTestFailingWithExceptionRecordedByUIAElementMacro:(NSException *)exception
+                                         isSLUIAElementException:(BOOL)isSLUIAElementException {
+    Class testClass = [TestWithSomeTestCases class];
+    id testMock = [OCMockObject partialMockForClass:testClass];
+
+    // verify that the test case is executed, then an error is logged
+    OCMExpectationSequencer *sequencer = [OCMExpectationSequencer sequencerWithMocks:@[ testMock, _loggerMock ]];
+
+    // when testOne is executed, cause it to fail with an `SLUIAElement` exception
+    // and record the filename and line number that the failing assertion should use
+    __block NSString *filenameAndLineNumberPrefix = nil;
+    [[[testMock expect] andDo:^(NSInvocation *invocation) {
+        SLTest *test = [invocation target];
+        NSString *__autoreleasing filename = nil; int lineNumber = 0;
+        @try {
+            [test slFailWithExceptionRecordedByUIAElementMacro:exception
+                                          thrownBySLUIAElement:isSLUIAElementException
+                                                    atFilename:&filename lineNumber:&lineNumber];
+        }
+        @catch (NSException *exception) {
+            filenameAndLineNumberPrefix = [NSString stringWithFormat:@"%@:%d: ", filename, lineNumber];
+            @throw exception;
+        }
+    }] testOne];
+
+    // if this exception was a `SLUIAElement` exception,
+    // check that the error logged includes the filename and line number as recorded above
+    // otherwise, check that the error reads "Unknown location: …"
+    [[_loggerMock expect] logError:[OCMArg checkWithBlock:^BOOL(id errorMessage) {
+        NSString *expectedPrefix = isSLUIAElementException ? filenameAndLineNumberPrefix : SLLoggerUnknownCallSite;
+        return [errorMessage hasPrefix:expectedPrefix];
+    }]];
+
+    SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);
+    STAssertNoThrow([sequencer verify], @"Test did not run/message was not logged in expected sequence.");
+}
+
+- (void)testSLUIAElementExceptionsIncludeFilenameAndLineNumberRecordedByUIAElementMacro {
+    // that the exception name is made-up shouldn't matter, so long as it has the appropriate prefix
+    // we'll have an `SLUIAElement` throw the exception (in `-[TestUtilities slFailWithException:thrownBySLUIAElement:precededByUIAElementUse:atFilename:lineNumber:])
+    // but only so that we can use the `UIAElement` macro before throwing the exception
+    NSString *exceptionName = [NSString stringWithFormat:@"%@%@", SLUIAElementExceptionNamePrefix, NSStringFromSelector(_cmd)];
+    NSException *exception = [NSException exceptionWithName:exceptionName reason:nil userInfo:nil];
+
+    [self runWithTestFailingWithExceptionRecordedByUIAElementMacro:exception isSLUIAElementException:YES];
+}
+
+- (void)testOtherExceptionsDoNotIncludeFilenameAndLineNumberRecordedByUIAElementMacro {
+    NSException *exception = [NSException exceptionWithName:NSInternalInconsistencyException reason:nil userInfo:nil];
+
+    [self runWithTestFailingWithExceptionRecordedByUIAElementMacro:exception isSLUIAElementException:NO];
+}
+
 #pragma mark -Wait
 
 - (void)testWaitDelaysForSpecifiedInterval {
@@ -1270,11 +1399,14 @@
     [[[testMock expect] andDo:^(NSInvocation *invocation) {
         SLTest *test = [invocation target];
         NSTimeInterval startTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        NSTimeInterval waitTimeInterval = 1.5;
-        [test wait:waitTimeInterval];
+        NSTimeInterval expectedWaitTimeInterval = 1.5;
+
+        [test wait:expectedWaitTimeInterval];
+
         NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
-        STAssertEqualsWithAccuracy(endTimeInterval - startTimeInterval, waitTimeInterval, .01,
-                                   @"Test did not delay for expected interval.");
+        NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
+        STAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < .01,
+                     @"Test did not delay for expected interval.");
     }] testOne];
 
     SLRunTestsAndWaitUntilFinished([NSSet setWithObject:testClass], nil);

@@ -161,18 +161,32 @@
  
  See `SLTest (SLTestCase)` for a discussion of test case execution.
  
- @param numCasesExecuted If this is non-`NULL`, on return, this will be set to
- the number of test cases that were executed--which will be the number of test
- cases defined by the receiver's class.
- @param numCasesFailed If this is non-`NULL`, on return, this will be set to the
- number of test cases that failed (the number of test cases that threw exceptions).
- @param numCasesFailedUnexpectedly If this is non-`NULL`, on return, this will
- be set to the number of test cases that failed unexpectedly (those test cases 
- that threw exceptions for other reasons than test assertion failures).
+ @param numCasesExecuted            If this is non-`NULL`, on return, this will be set to
+                                    the number of test cases that were executed--which will be the number of test
+                                    cases defined by the receiver's class.
+ @param numCasesFailed              If this is non-`NULL`, on return, this will be set to the
+                                    number of test cases that failed (the number of test cases that threw exceptions).
+ @param numCasesFailedUnexpectedly  If this is non-`NULL`, on return, this will
+                                    be set to the number of test cases that failed unexpectedly (those test cases
+                                    that threw exceptions for other reasons than test assertion failures).
+ 
+ @return `YES` if the test successfully finished (all test cases were executed, regardless of their individual 
+ success or failure), `NO` otherwise (an exception occurred in test case [set-up](-setUpTest) or [tear-down](-tearDownTest).
+ 
+ @warning If an exception occurs in test case set-up, the test's cases will be skipped.
+ Thus, the caller should use the values returned in `numCasesExecuted`, `numCasesFailed`, 
+ and `numCasesFailedUnexpectedly` if and only if this method returns `YES`.
  */
-- (void)runAndReportNumExecuted:(NSUInteger *)numCasesExecuted
+- (BOOL)runAndReportNumExecuted:(NSUInteger *)numCasesExecuted
                          failed:(NSUInteger *)numCasesFailed
              failedUnexpectedly:(NSUInteger *)numCasesFailedUnexpectedly;
+
+/**
+ The currently-running test case, if any.
+ 
+ This will be `nil` while the test is being set up or torn down.
+ */
+@property (nonatomic, readonly) NSString *currentTestCase;
 
 @end
 
@@ -348,7 +362,7 @@
  @param filename A filename, i.e. the last component of the `__FILE__` macro's expansion.
  @param lineNumber A line number, i.e. the `__LINE__` macro's expansion.
  */
-- (void)recordLastKnownFile:(char *)filename line:(int)lineNumber;
+- (void)recordLastKnownFile:(const char *)filename line:(int)lineNumber;
 
 /**
  Records the current filename and line number and returns its argument.
@@ -455,8 +469,9 @@
  to allow even longer timeouts when using `SLWaitUntilTrue` than when using
  `-wait:`.
 
- `SLWaitUntilTrue` may be used to wait for any condition for which it would be
- equally valid for the condition to return YES or NO. For example:
+ The difference between `SLWaitUntilTrue` and `SLAssertTrueWithTimeout` is that `SLWaitUntilTrue` 
+ may be used to wait upon a condition which might, with equal validity, evaluate to true _or_ false. 
+ For example:
 
  // wait for a confirmation message that may or may not appear, and dismiss it
  BOOL messageDisplayed = SLWaitUntilTrue([UIAElement(messageDismissButton) isValidAndVisible], 10.0);
@@ -472,7 +487,7 @@
     NSDate *_startDate = [NSDate date];\
     BOOL _expressionTrue = NO;\
     while (!(_expressionTrue = (expression)) && ([[NSDate date] timeIntervalSinceDate:_startDate] < timeout)) {\
-        [NSThread sleepForTimeInterval:0.25];\
+        [NSThread sleepForTimeInterval:SLWaitUntilTrueRetryDelay];\
     }\
     _expressionTrue;\
 })
@@ -588,13 +603,6 @@
 /// Thrown if a test assertion fails.
 extern NSString *const SLTestAssertionFailedException;
 
-/// Keys for the `userInfo` dictionary of exceptions thrown by, and not caught by,
-/// `SLTest`, i.e. assertion failures in `-setUpTest` and `-tearDownTest` which
-/// should cause the tests to abort.
-
-/// Object is an `NSString` representing the name of the file in which
-/// the exception occurred.
-extern NSString *const SLTestExceptionFilenameKey;
-/// Object is an `NSNumber` whose `integerValue` represents the line number on
-/// which the exception occurred.
-extern NSString *const SLTestExceptionLineNumberKey;
+/// The interval for which `SLAssertTrueWithTimeout` and `SLWaitUntilTrue`
+/// wait before re-evaluating their conditions.
+extern const NSTimeInterval SLWaitUntilTrueRetryDelay;

@@ -41,6 +41,15 @@
     return [NSString stringWithFormat:@"<%@>", NSStringFromClass([self class])];
 }
 
+- (BOOL)canDetermineTappability {
+    BOOL canDetermineTappability = YES;
+    if ((kCFCoreFoundationVersionNumber <= kCFCoreFoundationVersionNumber_iOS_5_1)
+        && ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)) {
+        canDetermineTappability = !self.isScrollView;
+    }
+    return canDetermineTappability;
+}
+
 - (void)waitUntilTappable:(BOOL)waitUntilTappable
         thenPerformActionWithUIARepresentation:(void (^)(NSString *UIARepresentation))block
                                        timeout:(NSTimeInterval)timeout {
@@ -56,7 +65,7 @@
     NSTimeInterval resolutionDuration = resolutionEnd - resolutionStart;
     NSTimeInterval remainingTimeout = timeout - resolutionDuration;
     
-    if (waitUntilTappable) {
+    if (waitUntilTappable && [self canDetermineTappability]) {
         if (![[SLTerminal sharedTerminal] waitUntilFunctionWithNameIsTrue:[[self class] SLElementIsTappableFunctionName]
                                                     whenEvaluatedWithArgs:@[ _UIARepresentation ]
                                                                retryDelay:SLUIAElementWaitRetryDelay
@@ -65,12 +74,36 @@
         }
     }
 
-    block(_UIARepresentation);
+    @try {
+        block(_UIARepresentation);
+    }
+    @catch (NSException *exception) {
+        // rename JavaScript exceptions to make the context of the exception clear
+        if ([[exception name] isEqualToString:SLTerminalJavaScriptException]) {
+            exception = [NSException exceptionWithName:SLUIAElementAutomationException
+                                                reason:[exception reason] userInfo:[exception userInfo]];
+        }
+        @throw exception;
+    }
 }
 
 - (BOOL)isValid {
     // isValid evaluates the current state, no waiting to resolve the element
     return [[[SLTerminal sharedTerminal] evalWithFormat:@"%@.isValid()", _UIARepresentation] boolValue];
+}
+
+#pragma mark -
+
+- (void)dragWithStartOffset:(CGPoint)startOffset endOffset:(CGPoint)endOffset {
+#if TARGET_IPHONE_SIMULATOR
+    if (self.isScrollView && (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_6_1)) {
+        NSString *warning = [NSString stringWithFormat:@"\
+                             Dragging of %@ will most likely fail, due to a bug in iOS 7.\
+                             See the documentation on `-dragWithStartOffset:endOffset:` for more information.", self];
+        [[SLLogger sharedLogger] logWarning:warning];
+    }
+#endif
+    [super dragWithStartOffset:startOffset endOffset:endOffset];
 }
 
 @end

@@ -10,12 +10,21 @@
 #import <Subliminal/Subliminal.h>
 
 /**
- Runs the specified tests and waits, without blocking, for them to finish.
+ Calls `SLRunTestsUsingSeedAndWaitUntilFinished` with `SLTestControllerRandomSeed`.
  
- @param tests The SLTest classes to run.
+ @param tests           The `SLTest` classes to run.
  @param completionBlock The optional completion block to execute after testing finishes.
  */
 extern void SLRunTestsAndWaitUntilFinished(NSSet *tests, void (^completionBlock)());
+
+/**
+ Runs the specified tests using the specified seed and waits, without blocking, for them to finish.
+
+ @param tests           The `SLTest` classes to run.
+ @param seed            The seed to use to run the tests.
+ @param completionBlock The optional completion block to execute after testing finishes.
+ */
+extern void SLRunTestsUsingSeedAndWaitUntilFinished(NSSet *tests, unsigned int seed, void (^completionBlock)());
 
 
 /**
@@ -48,5 +57,9 @@ extern void SLRunTestsAndWaitUntilFinished(NSSet *tests, void (^completionBlock)
 - (void)slAssertThrows:(void (^)(void))expression;
 - (void)slAssertThrows:(void (^)(void))expression named:(NSString *)exceptionName;
 - (void)slAssertNoThrow:(void (^)(void))expression;
+
+- (void)slFailWithExceptionRecordedByUIAElementMacro:(NSException *)exception
+                                thrownBySLUIAElement:(BOOL)haveSLUIAElementThrow
+                                          atFilename:(NSString *__autoreleasing *)filename lineNumber:(int *)lineNumber;
 
 @end

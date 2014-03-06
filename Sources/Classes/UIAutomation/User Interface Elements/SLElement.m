@@ -25,6 +25,8 @@
 #import "NSObject+SLAccessibilityHierarchy.h"
 #import "SLAccessibilityPath.h"
 #import "NSObject+SLVisibility.h"
+#import "NSObject+SLAccessibilityDescription.h"
+#import "UIScrollView+SLProgrammaticScrolling.h"
 
 
 // The real value (set in `+load`) is not a compile-time constant,
@@ -35,6 +37,8 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
 @implementation SLElement {
     BOOL (^_matchesObject)(NSObject*);
     NSString *_description;
+
+    BOOL _shouldDoubleCheckValidity;
 }
 
 + (void)load {
@@ -60,7 +64,10 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
         
         if (traits & UIAccessibilityTraitButton)                  [traitNames addObject:@"Button"];
         if (traits & UIAccessibilityTraitLink)                    [traitNames addObject:@"Link"];
-        if (traits & UIAccessibilityTraitHeader)                  [traitNames addObject:@"Header"];
+        // UIAccessibilityTraitHeader is only available starting in iOS 6
+        if (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_5_1) {
+            if (traits & UIAccessibilityTraitHeader)                  [traitNames addObject:@"Header"];
+        }
         if (traits & UIAccessibilityTraitSearchField)             [traitNames addObject:@"Search Field"];
         if (traits & UIAccessibilityTraitImage)                   [traitNames addObject:@"Image"];
         if (traits & UIAccessibilityTraitSelected)                [traitNames addObject:@"Selected"];
@@ -84,7 +91,13 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
 
     return [[self alloc] initWithPredicate:^BOOL(NSObject *obj) {
         BOOL matchesLabel   = ((label == nil) || [obj.accessibilityLabel isEqualToString:label]);
-        BOOL matchesValue   = ((value == nil) || [obj.accessibilityValue isEqualToString:value]);
+        // in iOS 6.1 (at least), `UITextView` returns an attributed string from `-accessibilityValue`
+        // as does `UISearchBarTextField` in iOS 7  >.<
+        id accessibilityValue = obj.accessibilityValue;
+        if ([accessibilityValue isKindOfClass:[NSAttributedString class]]) {
+            accessibilityValue = [accessibilityValue string];
+        }
+        BOOL matchesValue   = ((value == nil) || [accessibilityValue isEqualToString:value]);
         BOOL matchesTraits  = ((traits == SLUIAccessibilityTraitAny) || ((obj.accessibilityTraits & traits) == traits));
         return (matchesLabel && matchesValue && matchesTraits);
     } description:[NSString stringWithFormat:@"label: %@; value: %@; traits: %@", label, value, traitsString]];
@@ -129,6 +142,42 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
     return [NSString stringWithFormat:@"<%@ description:\"%@\">", NSStringFromClass([self class]), _description];
 }
 
+- (BOOL)canDetermineTappabilityUsingAccessibilityPath:(SLAccessibilityPath *)path {
+    BOOL canDetermineTappability = YES;
+    if ((kCFCoreFoundationVersionNumber <= kCFCoreFoundationVersionNumber_iOS_5_1)
+        && ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)) {
+        __block BOOL matchingObjectIsScrollView = NO;
+        [path examineLastPathComponent:^(NSObject *lastPathComponent) {
+            matchingObjectIsScrollView = [lastPathComponent isKindOfClass:[UIScrollView class]];
+        }];
+        canDetermineTappability = !matchingObjectIsScrollView;
+    }
+    return canDetermineTappability;
+}
+
+- (BOOL)canDetermineTappability {
+    BOOL canDetermineTappability = YES;
+    // incur the cost of a path lookup only if necessary
+    if ((kCFCoreFoundationVersionNumber <= kCFCoreFoundationVersionNumber_iOS_5_1)
+        && ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad)) {
+        // like `-isTappable`, evaluate the current state, no waiting to resolve the element
+        SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:0.0];
+        if (!accessibilityPath) {
+            [NSException raise:SLUIAElementInvalidException format:@"Element '%@' does not exist.", self];
+        }
+        canDetermineTappability = [self canDetermineTappabilityUsingAccessibilityPath:accessibilityPath];
+    }
+    return canDetermineTappability;
+}
+
+- (BOOL)shouldDoubleCheckValidity {
+    return _shouldDoubleCheckValidity;
+}
+
+- (void)setShouldDoubleCheckValidity:(BOOL)shouldDoubleCheckValidity {
+    _shouldDoubleCheckValidity = shouldDoubleCheckValidity;
+}
+
 - (SLAccessibilityPath *)accessibilityPathWithTimeout:(NSTimeInterval)timeout {
     __block SLAccessibilityPath *accessibilityPath = nil;
     NSDate *startDate = [NSDate date];
@@ -147,40 +196,73 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
 - (void)waitUntilTappable:(BOOL)waitUntilTappable
         thenPerformActionWithUIARepresentation:(void(^)(NSString *UIARepresentation))block
                                        timeout:(NSTimeInterval)timeout {
-    NSTimeInterval resolutionStart = [NSDate timeIntervalSinceReferenceDate];
-    SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:timeout];
-    if (!accessibilityPath) {
-        [NSException raise:SLUIAElementInvalidException format:@"Element '%@' does not exist.", self];
-    }
+    __block NSTimeInterval remainingTimeout = timeout;
+    __block BOOL didCheckTappability = NO, automationRaisedTappabilityException = NO;
+    NSException *__block actionException;
+    do {
+        actionException = nil;
+        
+        NSDate *resolutionStart = [NSDate date];
+        SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:remainingTimeout];
+        NSTimeInterval resolutionDuration = [[NSDate date] timeIntervalSinceDate:resolutionStart];
+        remainingTimeout -= resolutionDuration;
 
-    NSTimeInterval resolutionEnd = [NSDate timeIntervalSinceReferenceDate];
-    NSTimeInterval resolutionDuration = resolutionEnd - resolutionStart;
-    NSTimeInterval remainingTimeout = timeout - resolutionDuration;
+        if (!accessibilityPath) {
+            [NSException raise:SLUIAElementInvalidException format:@"Element '%@' does not exist.", self];
+        }
+        
+        // It's possible, if unlikely, that one or more path components could have dropped
+        // out of scope between the path's construction and its binding/serialization
+        // here. If the representation is invalid, UIAutomation will throw an exception,
+        // and it will be caught by Subliminal.
+        [accessibilityPath bindPath:^(SLAccessibilityPath *boundPath) {
+            // catch and rethrow exceptions so that we can unbind the path
+            @try {
+                NSString *UIARepresentation = [boundPath UIARepresentation];
 
-    // It's possible, if unlikely, that one or more path components could have dropped
-    // out of scope between the path's construction and its binding/serialization
-    // here. If the representation is invalid, UIAutomation will throw an exception,
-    // and it will be caught by Subliminal.
-    NSException *__block actionException = nil;
-    [accessibilityPath bindPath:^(SLAccessibilityPath *boundPath) {
-        // catch and rethrow exceptions so that we can unbind the path
-        @try {
-            NSString *UIARepresentation = [boundPath UIARepresentation];
-            if (waitUntilTappable) {
-                if (![[SLTerminal sharedTerminal] waitUntilFunctionWithNameIsTrue:[[self class]SLElementIsTappableFunctionName]
-                                                            whenEvaluatedWithArgs:@[ UIARepresentation ]
-                                                                       retryDelay:SLUIAElementWaitRetryDelay
-                                                                          timeout:remainingTimeout]) {
-                    [NSException raise:SLUIAElementNotTappableException format:@"Element '%@' is not tappable.", self];
+                if (self.shouldDoubleCheckValidity) {
+                    BOOL uiaIsValid = [[[SLTerminal sharedTerminal] evalWithFormat:@"%@.isValid()", UIARepresentation] boolValue];
+                    if (!uiaIsValid) {
+                        // Subliminal is not properly identifying the element to UIAutomation:
+                        // there is a bug in `SLAccessibilityPath` or `NSObject (SLAccessibilityHierarchy)`
+                        [NSException raise:SLUIAElementInvalidException format:@"Element '%@' does not exist at path '%@'.", self, UIARepresentation];
+                    }
                 }
-            }
 
-            block(UIARepresentation);
-        }
-        @catch (NSException *exception) {
-            actionException = exception;
-        }
-    }];
+                // evaluate canDetermineTappability using the current path
+                // because we can't retrieve another while the element is bound
+                if (waitUntilTappable && [self canDetermineTappabilityUsingAccessibilityPath:accessibilityPath]) {
+                    NSDate *tappabilityCheckStart = [NSDate date];
+                    BOOL isTappable = [[SLTerminal sharedTerminal] waitUntilFunctionWithNameIsTrue:[[self class]SLElementIsTappableFunctionName]
+                                                                             whenEvaluatedWithArgs:@[ UIARepresentation ]
+                                                                                        retryDelay:SLUIAElementWaitRetryDelay
+                                                                                           timeout:remainingTimeout];
+                    NSTimeInterval tappabilityCheckDuration = [[NSDate date] timeIntervalSinceDate:tappabilityCheckStart];
+                    remainingTimeout -= tappabilityCheckDuration;
+                    didCheckTappability = YES;
+
+                    if (!isTappable) [NSException raise:SLUIAElementNotTappableException format:@"Element '%@' is not tappable.", self];
+                }
+                block(UIARepresentation);
+            }
+            @catch (NSException *exception) {
+                // rename JavaScript exceptions to make the context of the exception clear
+                if ([[exception name] isEqualToString:SLTerminalJavaScriptException]) {
+                    exception = [NSException exceptionWithName:SLUIAElementAutomationException
+                                                        reason:[exception reason] userInfo:[exception userInfo]];
+                }
+                actionException = exception;
+            }
+        }];
+
+        // In certain circumstances (e.g. during animations, when the view hierarchy is undergoing rapid modification)
+        // it's possible for Subliminal to identify a valid and tappable element, only for that element to have
+        // been replaced in the accessibility hierarchy by the time that UIAutomation goes to manipulate the element.
+        // This results in UIAutomation raising an exception about the element not being tappable
+        // --despite Subliminal's tappability check having succeeded. If this occurs and time remains, we retry.
+        automationRaisedTappabilityException =  [[actionException name] isEqualToString:SLUIAElementAutomationException] &&
+                                                [[actionException reason] hasSuffix:@"could not be tapped"];
+    } while (didCheckTappability && automationRaisedTappabilityException && (remainingTimeout > 0));
     if (actionException) @throw actionException;
 }
 
@@ -191,32 +273,47 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
 - (void)examineMatchingObject:(void (^)(NSObject *))block timeout:(NSTimeInterval)timeout {
     NSParameterAssert(block);
 
-    SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:timeout];
-    if (!accessibilityPath) {
-        [NSException raise:SLUIAElementInvalidException
-                    format:@"Element %@ does not exist.", self];
-    }
+    __block NSTimeInterval remainingTimeout = timeout;
+    NSException *__block examinationException;
+    do {
+        examinationException = nil;
 
-    // It's possible, if unlikely, that the matching object could have dropped
-    // out of scope between the path's construction and its examination here
-    __block BOOL matchingObjectWasOutOfScope = NO;
-    [accessibilityPath examineLastPathComponent:^(NSObject *lastPathComponent) {
-        if (!lastPathComponent) {
-            matchingObjectWasOutOfScope = YES;
-            return;
+        NSDate *resolutionStart = [NSDate date];
+        SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:remainingTimeout];
+        NSTimeInterval resolutionDuration = [[NSDate date] timeIntervalSinceDate:resolutionStart];
+        remainingTimeout -= resolutionDuration;
+        
+        if (!accessibilityPath) {
+            [NSException raise:SLUIAElementInvalidException format:@"Element '%@' does not exist.", self];
         }
-        block(lastPathComponent);
-    }];
 
-    if (matchingObjectWasOutOfScope) {
-        [NSException raise:SLUIAElementInvalidException
-                    format:@"Element %@ does not exist.", self];
-    }
+        [accessibilityPath examineLastPathComponent:^(NSObject *lastPathComponent) {
+            // It's possible, if unlikely, that the matching object could have dropped
+            // out of scope between the path's construction and its examination here
+            if (!lastPathComponent) {
+                examinationException = [NSException exceptionWithName:SLUIAElementInvalidException
+                                                               reason:[NSString stringWithFormat:@"Element %@ does not exist.", self] userInfo:nil];
+                return;
+            }
+            block(lastPathComponent);
+        }];
+
+        // if the matching object dropped out of scope, retry while the timeout has not elapsed
+    } while (examinationException && (remainingTimeout > 0));
+    if (examinationException) @throw examinationException;
 }
 
 - (BOOL)isValid {
     // isValid evaluates the current state, no waiting to resolve the element
-    return ([self accessibilityPathWithTimeout:0.0] != nil);
+    SLAccessibilityPath *accessibilityPath = [self accessibilityPathWithTimeout:0.0];
+    __block BOOL isValid = (accessibilityPath != nil);
+    if (isValid && self.shouldDoubleCheckValidity) {
+        [accessibilityPath bindPath:^(SLAccessibilityPath *boundPath) {
+            NSString *UIARepresentation = [boundPath UIARepresentation];
+            isValid = [[[SLTerminal sharedTerminal] evalWithFormat:@"%@.isValid()", UIARepresentation] boolValue];
+        }];
+    }
+    return isValid;
 }
 
 /*
@@ -240,6 +337,65 @@ UIAccessibilityTraits SLUIAccessibilityTraitAny = 0;
     }
 
     return isVisible;
+}
+
+#pragma mark -
+
+- (void)tapAtActivationPoint {
+    __block CGPoint activationPoint;
+    __block CGRect accessibilityFrame;
+    [self examineMatchingObject:^(NSObject *object) {
+        activationPoint = [object accessibilityActivationPoint];
+        accessibilityFrame = [object accessibilityFrame];
+    }];
+
+    CGPoint activationOffset = (CGPoint){
+        .x = (activationPoint.x - CGRectGetMinX(accessibilityFrame)) / CGRectGetWidth(accessibilityFrame),
+        .y = (activationPoint.y - CGRectGetMinY(accessibilityFrame)) / CGRectGetHeight(accessibilityFrame)
+    };
+    [self waitUntilTappable:YES thenSendMessage:@"tapWithOptions({tapOffset:{x:%g, y:%g}})", activationOffset.x, activationOffset.y];
+}
+
+- (void)dragWithStartOffset:(CGPoint)startOffset endOffset:(CGPoint)endOffset {
+    // In the iOS 7 Simulator, scroll views' pan gesture recognizers fail to cause those views to scroll
+    // in response to UIAutomation drag gestures, so we must programmatically scroll those views.
+#if TARGET_IPHONE_SIMULATOR
+    if (kCFCoreFoundationVersionNumber > kCFCoreFoundationVersionNumber_iOS_6_1) {
+        [self examineMatchingObject:^(NSObject *object) {
+            if ([object isKindOfClass:[UIScrollView class]]) {
+                [(UIScrollView *)object slScrollWithStartOffset:startOffset endOffset:endOffset];
+            }
+        }];
+    }
+#endif
+
+    // Even if we programmatically dragged a scroll view above, we concurrently ask `UIAutomation` to drag the view,
+    // because scroll views(' `UIResponder` method implementations) do receive the touches involved in drag gestures
+    // and our programmatic scroll method does not deliver such touches.
+    [super dragWithStartOffset:startOffset endOffset:endOffset];
+}
+
+#pragma mark -
+
+- (NSString *)accessibilityDescription {
+    NSString *__block description = nil;
+    [self examineMatchingObject:^(NSObject *object) {
+        description = [object slAccessibilityDescription];
+    }];
+    return description;
+}
+
+- (void)logElement {
+    SLLog(@"%@", [self accessibilityDescription]);
+}
+
+// First log the element using `-slAccessibilityDescription` so the user can see the unbound name
+// (https://github.com/inkling/Subliminal/issues/65 ), but otherwise use UIAutomation to log the tree
+// because it will log just those elements in the accessibility hierarchy,
+// which would be expensive for us to determine.
+- (void)logElementTree {
+    SLLog(@"Logging the tree rooted in %@:", [self accessibilityDescription]);
+    [super logElementTree];
 }
 
 @end

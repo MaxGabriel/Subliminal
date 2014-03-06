@@ -55,7 +55,9 @@
 
     if (testCaseSelector == @selector(testStaticElementsWaitUntilTappable) ||
         testCaseSelector == @selector(testStaticElementsThrowIfElementIsNotTappableAtEndOfTimeout)) {
-        SLAskApp(hideButton); // to make the button not tappable
+        SLAskApp(hideButton);       // to make the button not tappable
+    } else if (testCaseSelector == @selector(testStaticElementsDoNotWaitUntilTappableIfIsScrollViewIsYESAndIsIPad5_x)) {
+        SLAskApp(hideScrollView);   // to make it not tappable
     }
 }
 
@@ -70,11 +72,17 @@
 }
 
 // Checking validity is a process involving JS execution, with some variability:
-// +/- one SLElementRetryDelay and two SLTerminalReadRetryDelays (one for
-// SLTerminal.js receiving the command and one for SLTerminal receiving the result).
-// If we tap the element that command involves another two SLTerminalReadRetryDelay's.
-- (NSTimeInterval)waitDelayVariabilityIncludingTap:(BOOL)includingTap {
-    return SLUIAElementWaitRetryDelay + SLTerminalReadRetryDelay * (includingTap ? 4 : 2);
+// +/- one `SLUIAElementWaitRetryDelay`, two `SLTerminalReadRetryDelays` (one for
+// `SLTerminal.js` receiving the command and one for `SLTerminal` receiving the result),
+// and one `SLTerminalEvaluationDelay` (to evaluate the command).
+// Waiting for tappability and/or an action (e.g. checking the element's value, tapping on the element)
+// will involve 2 more `SLTerminalReadRetryDelays`, and another `SLTerminalEvaluationDelay`, apiece.
+- (NSTimeInterval)waitDelayVariabilityIncludingTappabilityCheck:(BOOL)includeTappabilityCheck
+                                                         action:(BOOL)includeAction {
+    NSUInteger evaluationCount = 1;
+    if (includeTappabilityCheck) evaluationCount++;
+    if (includeAction) evaluationCount++;
+    return SLUIAElementWaitRetryDelay + ((SLTerminalReadRetryDelay * 2) + SLTerminalEvaluationDelay) * evaluationCount;
 }
 
 - (void)testStaticElementsWaitToMatchValidObjects {
@@ -96,8 +104,8 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < [self waitDelayVariabilityIncludingTap:NO],
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:NO action:YES],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
 
     SLAssertTrue([elementValue isEqualToString:@"elementValue"],
@@ -122,8 +130,9 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < [self waitDelayVariabilityIncludingTap:NO],
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    // No action because we should have aborted after the validity check, and not asked UIAutomation for the value
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:NO action:NO],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
 }
 
@@ -153,8 +162,8 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < [self waitDelayVariabilityIncludingTap:YES],
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:YES action:YES],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
 
     SLAssertTrue(SLAskAppYesNo(buttonWasTapped), @"Button should have been tapped.");
@@ -176,9 +185,82 @@
 
     NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
     NSTimeInterval actualWaitTimeInterval = endTimeInterval - startTimeInterval;
-    SLAssertTrue(ABS(actualWaitTimeInterval - expectedWaitTimeInterval) < [self waitDelayVariabilityIncludingTap:NO],
-                 @"Test waited for %g but should not have waited appreciably longer or shorter than %g.",
+    // we should have aborted after the tappability check, and not tapped
+    SLAssertTrue(actualWaitTimeInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:YES action:NO],
+                 @"Test waited for %g but should not have waited appreciably longer than %g.",
                  actualWaitTimeInterval, expectedWaitTimeInterval);
+}
+
+- (void)testStaticElementsDoNotWaitUntilTappableIfIsScrollViewIsYESAndIsIPad5_x {
+    SLStaticElement *scrollView = [[SLStaticElement alloc] initWithUIARepresentation:@"UIATarget.localTarget().frontMostApp().mainWindow().scrollViews()['scroll view']"];
+
+    
+    // first test with isScrollView set to YES
+    scrollView.isScrollView = YES;
+    
+    BOOL isIPad5_x = ((kCFCoreFoundationVersionNumber <= kCFCoreFoundationVersionNumber_iOS_5_1) &&
+                      ([[UIDevice currentDevice] userInterfaceIdiom] == UIUserInterfaceIdiomPad));
+    NSTimeInterval expectedWaitTimeInterval;
+    if (isIPad5_x) {
+        expectedWaitTimeInterval = 0.0;
+        SLAssertFalse([UIAElement(scrollView) isTappable],
+                      @"UIAutomation should report scroll views as not tappable on iPad 5_x.");
+    } else {
+        expectedWaitTimeInterval = 2.0;
+    }
+
+    NSTimeInterval startTimeInterval = [NSDate timeIntervalSinceReferenceDate];
+    // make the scroll view tappable (if not for UIAutomation's bug)
+    // after the expected wait interval
+    SLAskApp1(showScrollViewAfterInterval:, @(expectedWaitTimeInterval));
+    if (isIPad5_x) {
+        // we should try to tap the scroll view, despite it not being tappable
+        SLAssertThrowsNamed(([UIAElement(scrollView) waitUntilTappable:YES
+                                  thenPerformActionWithUIARepresentation:^(NSString *UIARepresentation) {
+                                      [[SLTerminal sharedTerminal] evalWithFormat:@"%@.tap()", UIARepresentation];
+                                  } timeout:[SLStaticElement defaultTimeout]]),
+                            SLUIAElementAutomationException,
+                            @"Should have tried to tap the scroll view and found it to not be tappable.");
+    } else {
+        SLAssertNoThrow(([UIAElement(scrollView) waitUntilTappable:YES
+                              thenPerformActionWithUIARepresentation:^(NSString *UIARepresentation) {
+                                  [[SLTerminal sharedTerminal] evalWithFormat:@"%@.tap()", UIARepresentation];
+                              } timeout:[SLStaticElement defaultTimeout]]),
+                        @"Should have been able to tap the scroll view.");
+    }
+    NSTimeInterval endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
+    NSTimeInterval actualWaitInterval = endTimeInterval - startTimeInterval;
+    // we should not have waited for tappability on iPad 5_x, due to `isScrollView` being `YES`
+    SLAssertTrue(actualWaitInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:!isIPad5_x action:YES],
+                 @"Test waited for %g but should not have waited for appreciably longer than %g.",
+                 actualWaitInterval, expectedWaitTimeInterval);
+
+    
+    // now, if we're running on an iPad running 5_x, test with isScrollView off
+    if (isIPad5_x) {
+        scrollView.isScrollView = NO;
+        // we already showed the scroll view above but just to be sure
+        // --the scroll view _should_ be tappable (if not for UIAutomation's bug)
+        SLAskApp1(showScrollViewAfterInterval:, @0.0);
+
+        // now we should wait for the entire timeout
+        expectedWaitTimeInterval = [SLStaticElement defaultTimeout];
+        startTimeInterval = [NSDate timeIntervalSinceReferenceDate];
+        // and we shouldn't try to tap on the view, because we should abort beforehand,
+        // saying that the scroll view is not tappable
+        SLAssertThrowsNamed(([UIAElement(scrollView) waitUntilTappable:YES
+                                thenPerformActionWithUIARepresentation:^(NSString *UIARepresentation) {
+                                    [[SLTerminal sharedTerminal] evalWithFormat:@"%@.tap()", UIARepresentation];
+                                } timeout:expectedWaitTimeInterval]),
+                            SLUIAElementNotTappableException,
+                            @"Should have tried to tap the scroll view and found it to not be tappable.");
+        endTimeInterval = [NSDate timeIntervalSinceReferenceDate];
+        actualWaitInterval = endTimeInterval - startTimeInterval;
+        // we should have aborted after the tappability check, and not tapped
+        SLAssertTrue(actualWaitInterval - expectedWaitTimeInterval < [self waitDelayVariabilityIncludingTappabilityCheck:YES action:NO],
+                     @"Test waited for %g but should not have waited for appreciably longer than %g.",
+                     actualWaitInterval, expectedWaitTimeInterval);
+    }
 }
 
 @end

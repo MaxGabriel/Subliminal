@@ -35,11 +35,12 @@
 
 @implementation SLElementStateTestViewController {
     UIView *_testView;
+    UITextField *_textField;
 }
 
 + (NSString *)nibNameForTestCase:(SEL)testCase {
     NSString *nibName = nil;
-    if (testCase == @selector(testHitpointReturnsAlternatePointIfRectMidpointIsCovered)) {
+    if (testCase == @selector(testHitpointReturnsAlternatePointIfDefaultIsCovered)) {
         nibName = @"SLElementStateTestMidpointCovered";
     } else if (testCase == @selector(testHitpointReturnsNullPointIfElementIsCovered) ||
                testCase == @selector(testElementIsTappableIfItHasANonNullHitpoint) ||
@@ -53,7 +54,8 @@
     if (testCase == @selector(testLabel) ||
         testCase == @selector(testValue) ||
         testCase == @selector(testIsEnabledMirrorsUIControlIsEnabledWhenMatchingObjectIsUIControl) ||
-        testCase == @selector(testHitpointReturnsRectMidpointByDefault) ||
+        testCase == @selector(testHitpointDefault) ||
+        testCase == @selector(testHitpointDefaultIsNotAccessibilityActivationPointBelowIOS7) ||
         testCase == @selector(testRect)) {
         UIView *view = [[UIView alloc] initWithFrame:self.navigationController.view.bounds];
         view.backgroundColor = [UIColor whiteColor];
@@ -76,6 +78,13 @@
         _testView.center = view.center;
 
         self.view = view;
+    } else  if (testCase == @selector(testHasKeyboardFocus)) {
+        UIView *view = [[UIView alloc] initWithFrame:CGRectZero];
+
+        _textField = [[UITextField alloc] initWithFrame:(CGRect){CGPointZero, CGSizeMake(100.0f, 30.0f)}];
+        [view addSubview:_textField];
+
+        self.view = view;
     }
 }
 
@@ -89,6 +98,18 @@
 
     _testView.isAccessibilityElement = YES;
     _testView.accessibilityLabel = @"Test Element";
+
+    _textField.accessibilityLabel = @"Test Element";
+    _textField.borderStyle = UITextBorderStyleRoundedRect;
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+
+    // move the textfield above the keyboard
+    static const CGFloat kTextFieldVerticalOffset = -40.0f;
+    CGPoint textFieldCenter = CGPointMake(self.view.center.x, self.view.center.y + kTextFieldVerticalOffset);
+    _textField.center = textFieldCenter;
 }
 
 - (instancetype)initWithTestCaseWithSelector:(SEL)testCase {
@@ -99,7 +120,10 @@
         [testController registerTarget:self forAction:@selector(elementValue)];
         [testController registerTarget:self forAction:@selector(disableElement)];
         [testController registerTarget:self forAction:@selector(enableElement)];
+        [testController registerTarget:self forAction:@selector(modifyActivationPoint)];
+        [testController registerTarget:self forAction:@selector(activationPoint)];
         [testController registerTarget:self forAction:@selector(uncoverTestView)];
+        [testController registerTarget:self forAction:@selector(makeTextFieldFirstResponder)];
         [testController registerTarget:self forAction:@selector(elementRect)];
     }
     return self;
@@ -127,8 +151,23 @@
     _button.enabled = YES;
 }
 
+- (void)modifyActivationPoint {
+    _button.accessibilityActivationPoint = (CGPoint){
+        .x = _button.accessibilityActivationPoint.x - 15.0f,
+        .y = _button.accessibilityActivationPoint.y - 15.0f
+    };
+}
+
+- (NSValue *)activationPoint {
+    return [NSValue valueWithCGPoint:_button.accessibilityActivationPoint];
+}
+
 - (void)uncoverTestView {
     _coveringView.hidden = YES;
+}
+
+- (void)makeTextFieldFirstResponder {
+    [_textField becomeFirstResponder];
 }
 
 - (NSValue *)elementRect {
