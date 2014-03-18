@@ -9,6 +9,8 @@ Pod::Spec.new do |s|
                      Visit Subliminal's website for [complete API documentation](http://inkling.github.io/Subliminal/Documentation/).
                     DESC
   s.homepage     = "http://inkling.github.io/Subliminal/"
+  s.documentation_url = "http://inkling.github.io/Subliminal/Documentation/"
+  s.social_media_url = 'https://twitter.com/subliminaltest'
   s.license      = 'Apache 2.0'
   s.author       = { "Jeff Wear" => "jeff@inkling.com" }
   s.source       = { :git => "https://github.com/inkling/Subliminal.git", :tag => "1.0.1" }
@@ -22,12 +24,5 @@ Pod::Spec.new do |s|
     'INFOPLIST_FILE' => '$(TARGET_NAME)/$(TARGET_NAME)-Info.plist',
     'PRODUCT_NAME' => '$(PROJECT_NAME) ($(TARGET_NAME))',
    }
-
-   # Installs Subliminal Instruments Template and file templates
-  s.post_install do |library_representation|
-    Dir.chdir(library_representation.sandbox_dir + 'Subliminal/') do
-      system('rake install DOCS=no') # Rake is a dependency of Cocoapods
-    end
-  end
   
 end
